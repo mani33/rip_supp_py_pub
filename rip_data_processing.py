@@ -193,12 +193,14 @@ def filter_trials_by_beh_state(tr_on, tr_off, beh_state, key):
         ephys_start, ephys_end = (acq.Ephys & key).fetch('ephys_start_time','ephys_stop_time')
        
     elif beh_state == 'nrem':
-        t1, t2 = (cont.NremSegManual & key).fetch('seg_begin','seg_end')
+        t1, t2 = (cont.SleepAuto & key).fetch('nrem_seg_begin','nrem_seg_end')
+        #t1, t2 = (cont.NremSegManual & key).fetch('seg_begin','seg_end')
         t1 = t1[0][0]
         t2 = t2[0][0]
         
     elif beh_state == 'rem':
-        t1, t2 = (cont.RemSegManual & key).fetch('seg_begin','seg_end')
+        t1, t2 = (cont.SleepAuto & key).fetch('rem_seg_begin','rem_seg_end')
+        # t1, t2 = (cont.RemSegManual & key).fetch('seg_begin','seg_end')
         t1 = t1[0][0]
         t2 = t2[0][0]
         
@@ -303,7 +305,7 @@ def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax,
                 should be combined or not. Default is pool_repeats=True.
        
     Outputs:
-        group_data - list of dict, containing info of ripples for each chan of each mouse     
+        group_data : list (mice) of list(channels) of dict (ripple data)
     """
     
     group_data = [[] for _ in range(data_sessions.shape[0])]
@@ -324,7 +326,10 @@ def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax,
         # set of experimental parameters including recording channels. 
         # So parameters come from the first session.
         dd_one = dd.iloc[0,:]
-        chans = [int(cc) for cc in dd_one.chan.split(',')]
+        if isinstance(dd_one.chan, str):
+            chans = [int(cc) for cc in dd_one.chan.split(',')]
+        elif isinstance(dd_one.chan,int) | isinstance(dd_one.chan,float):
+            chans = [dd_one.chan]
         for ch in chans:
             for jk, key in enumerate(keys):
                 keys[jk].update({'chan_num': ch})
@@ -341,7 +346,73 @@ def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax,
         print(f'Done with mouse {idx}')
         idx += 1
     return group_data
-        
+
+def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
+    """
+    For each photostim trial of a mouse, we will 'pool' data from all available 
+    channels. The pooling does not necessarily mean getting rip events from all
+    channels. For example, one method to collapse all channel data will be to
+    pick one random channel. Alternatively, we can average the number of ripples
+    in a bin across all available channels. We need to do this trial wise for
+    statistical tests on individual mice.
+    
+    Inputs:
+        group_data: list (mice) of list(channels) of dict ('animal_id','chan_num'
+                    rdata(list of dict),args). 
+                        This is an output from collect_mouse_group_rip_data(...) 
+                        function call. 
+                        rdata is a list of dict:
+                        len(rdata) = num of trials. Each dict contains the following keys:
+                        'rel_mt' - numpy array of time (sec) relative to stim train onset
+                        'mx','my' - numpy array of tracker LED x and y coodinate respectively
+                        'head_disp' - numpy array of head displacement per video frame (pix/frame)
+                        'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
+        elec_sel_meth: str, should be one of 'avg' or'random'
+    Outputs:
+        cgroup_data: list(of length nMice) of dict('animal_id','args','trial_data') where
+                    trial_data is a list (of length nTrials) of 
+                    dict('rel_mt','mx','my','head_disp','bin_cen_t','rip_cnt')                 
+    """ 
+    cgroup_data = []
+    # For each mouse and each trial, pick a channel or average across channels
+    for iMouse,md in enumerate(group_data): # loop over mice
+        nChan = len(md)                
+        nTrials = len(md[0]['rdata'])
+        args = md[0]['args']
+        bw = args.bin_width/1000
+        bin_edges = np.arange(args.xmin,args.xmax+bw,bw)               
+        bin_cen = bin_edges[:-1]+bw/2
+        # Go through each trial. For each channel, bin the trial events
+        all_trial_data = []               
+        for iTrial in range(nTrials):
+            hdata = np.zeros((nChan,bin_cen.size))
+            # Motion data are same for all channels. So pick those from
+            # the first channel
+            cdata = md[0]['rdata'][iTrial]
+            match elec_sel_meth: 
+                case 'random':
+                    chd = md[np.random.randint(nChan)]
+                    evt_t = chd['rdata'][iTrial]['rip_evt']
+                    rip_cnt,_ = np.histogram(evt_t,bin_edges)
+                case 'avg':
+                    for iChan in range(nChan):
+                        evt_t = md[iChan]['rdata'][iTrial]['rip_evt']
+                        # Bin the event times
+                        hdata[iChan,:],_ = np.histogram(evt_t,bin_edges)                      
+                    # Collapse (average) across channel
+                    # Recreate cgroup_data data structure just like group_data
+                    # except that there will be only one collapsed channel now.
+                    rip_cnt = np.mean(hdata,axis=0)                        
+            # Build trial data structure as a dict
+            one_trial_data = {'rel_mt': cdata['rel_mt'],'mx':cdata['mx'],
+                              'my':cdata['my'],'head_disp':cdata['head_disp'],
+                              'rip_cnt':rip_cnt}
+            all_trial_data.append(one_trial_data)
+        one_mouse_data = {'animal_id':md[0]['animal_id'],'args':md[0]['args'],
+                          'bin_cen_t':bin_cen,'trial_data':all_trial_data}
+        cgroup_data.append(one_mouse_data)
+    return cgroup_data                    
+    
 def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     """
     When multiple electrodes had ripples, pick one based on given selection method.
@@ -375,31 +446,32 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
             rip_rate = []
             for chd in md: # loop over channels of each mouse
                 args = chd['args']
-                rd, _, bin_cen = get_ripple_rate(chd['rdata'], 
-                                                       args.bin_width, 
-                                                       args.xmin, args.xmax)
+                rd, _, bin_cen = get_ripple_rate(chd['rdata'],args.bin_width, 
+                                                   args.xmin, args.xmax)
                 rip_rate.append(rd)
             # Apply selection on the ripple rate
             rip_rate = np.array(rip_rate)
-            if elec_sel_meth == 'avg':
-                mouse_rr = np.mean(rip_rate, axis=0)
-            elif elec_sel_meth == 'max_effect':
-                # Select time window where effect is expected
-                assert 'light_effect_win' in kwargs, 'You must provide "light_effect_win" eg. [0,5]'
-                w = kwargs['light_effect_win']
-                # First normalize ripple rate to baseline so that we can identify
-                # channel with max suppression effect
-                normfn = lambda rr: rr/np.mean(rr[bin_cen < 0])
-                rip_rate_norm = np.apply_along_axis(normfn, 1, rip_rate)                
-                edata = rip_rate_norm[:, (bin_cen >= w[0]) & (bin_cen < w[1])]
-                # Find channel with minimum ripple rate in the light effect window
-                max_supp_ch_ind = np.mean(edata, axis=1).argmin()
-                mouse_rr = rip_rate[max_supp_ch_ind,:]
-            elif elec_sel_meth == 'max_baseline_rate':
-                edata = rip_rate[:, bin_cen < 0]
-                max_ch_ind = np.mean(edata, axis=1).argmax()
-                mouse_rr = rip_rate[max_ch_ind, :]
-                
+            match elec_sel_meth:
+                case 'avg':
+                    mouse_rr = np.mean(rip_rate, axis=0)
+                case 'max_effect':
+                    # Select time window where effect is expected
+                    assert 'light_effect_win' in kwargs, 'You must provide "light_effect_win" eg. [0,5]'
+                    w = kwargs['light_effect_win']
+                    # First normalize ripple rate to baseline so that we can identify
+                    # channel with max suppression effect
+                    normfn = lambda rr: rr/np.mean(rr[bin_cen < 0])
+                    rip_rate_norm = np.apply_along_axis(normfn, 1, rip_rate)                
+                    edata = rip_rate_norm[:, (bin_cen >= w[0]) & (bin_cen < w[1])]
+                    # Find channel with minimum ripple rate in the light effect window
+                    max_supp_ch_ind = np.mean(edata, axis=1).argmin()
+                    mouse_rr = rip_rate[max_supp_ch_ind,:]
+                case 'max_baseline_rate':
+                    edata = rip_rate[:, bin_cen < 0]
+                    max_ch_ind = np.mean(edata, axis=1).argmax()
+                    mouse_rr = rip_rate[max_ch_ind, :]
+                case _:
+                    raise ValueError("The provided method %s is not implemented\n" % elec_sel_meth)                
         all_rr.append(mouse_rr)
     
     # Normalize ripple rate to baseline before averaging across mice

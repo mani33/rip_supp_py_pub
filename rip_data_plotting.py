@@ -18,6 +18,7 @@ import numpy as np
 import plot_helpers as ph
 import general_functions as gfun
 import rip_data_processing as rdp
+
 # import scipy.stats as stats 
 
 # For separate window, use %matplotlib qt
@@ -35,9 +36,10 @@ def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
     for k, v in kwargs.items():
         setattr(args, k, v)
         
-    plt.close()
-    fig_num = 1
-    fig = plt.figure(num = fig_num, figsize=(11.15,6.15), dpi = 150, tight_layout = True)
+    if 'fig_num' not in kwargs:
+        args.fig_num = None
+    
+    fig = plt.figure(num =args.fig_num, figsize=(11.15,6.15), dpi = 150, tight_layout = True)
        
     # All plot beautification params such as tick label size, spine linewidth etc
     set_common_subplot_params(plt) 
@@ -155,7 +157,7 @@ def plot_ripples_hist(rdata, args, hax):
     # x-axis data is set tight.
     # hax.margins(0.0,0.075)
     hax.set_xlim([args.xmin, args.xmax])
-    hax.set_xlabel('Time (s)')
+    hax.set_xlabel('Time (s) relative to photostimulation')
     hax.set_ylabel('Ripples/s')
     
 def plot_ripples_as_dots(rdata, args, rax):
@@ -178,9 +180,8 @@ def plot_ripples_as_dots(rdata, args, rax):
     rax.set_xlim([args.xmin, args.xmax])
     # Leave space for light pulse on the top but keep bottom tight
     rax.set_ylim(-2, rax.get_ylim()[1]) 
-    rax.set_xlabel('Time (s) relative to stimulation')
+    rax.set_xlabel('Time (s) relative to photostimulation')
     rax.set_ylabel('Photostimulation trial')
-       
 
 def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax, **kwargs):
     """
