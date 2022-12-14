@@ -15,7 +15,6 @@ import ripples as ripples
 import general_functions as gfun
 import djutils as dju
 
-
 # Class for default values of parameters
 class Args():
     def __init__(self):
@@ -33,14 +32,12 @@ class Args():
         # Remove trials without ripples?
         self.remove_norip_trials = True
         self.remove_noise_spikes = True
-        self.pre_and_stim_only = True
-        
+        self.pre_and_stim_only = True        
 
 # main function that calls other functions
 def get_processed_rip_data(keys, pulse_per_train, std, minwidth, **kwargs):
     """ This function takes one or more channel keys as input. Possible input key-value pairs
-        are indicated in the Args class.
-        
+        are indicated in the Args class.        
         Inputs:
             keys - list of dict. Must be a list even if just one dict. When giving multiple keys
                     user must ensure that all keys had the same light pulse stimulation protocol
@@ -56,9 +53,7 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, **kwargs):
                     'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
                     
             args - Args class object contaning a bunch of experiment related info.
-        """
-        
-
+        """        
     # Ensure list type for keys, std and minwidth
     std = std if type(std) is list else [std]
     minwidth = minwidth if type(minwidth) is list else [minwidth]

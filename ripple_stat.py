@@ -4,7 +4,6 @@ Created on Wed Dec  7 18:00:49 2022
 Statistics for the ripple suppression paper
 Mani Subramaniyan
 """
-
 import cluster_based_nonparam_test as cmt
 import pandas as pd
 import rip_data_processing as rdp
@@ -14,28 +13,30 @@ import numpy as np
 # Common parameters for statistics
 class Args():
     def __init__(self):
-        self.nBoot = 10
-        self.alpha = 0.05/2 # two sided test
-        self.test = 't' # 't' or 'ranksum'
-#def get_sig_mod_times(bin_cen_t,rdata,)
+        self.nBoot = 2000
+        self.alpha = 0.05/2 # two sided test        
 
-def figure_1_stat():
+def get_figure_1_stat(group_data):
+    """ Perform statistics on indivisual mouse ripple suppression data.
+    Inputs:        
+        group_data = rdp.collect_mouse_group_rip_data(dd, beh_state, xmin, xmax,
+                                args.bin_width)
+        where rdp is ripple data processing module
+    Outputs:
+        sig_mod_times - list (length of nMice) of 1d numpy array of bin_cen_t 
+                        of clusters that are significantly modulated
+        nBoot - number of bootstrap simulations used
+    """
     # Read the first three rows of wild-type sheet in the excel sheet
     fn = r"C:\Users\maniv\Documents\upenn_projects\ripple_suppression\docs\ripp_supp_rec_sessions.xlsx"
     dd = pd.read_excel(fn,'wild_type')
     # Slice the dataframe to include only the first three sessions
-    dd = dd.iloc[[0,1,2],:]
-    beh_state = 'nrem'
-    xmin = -5
-    xmax = 5
-    bin_width = 200
+    dd = dd.iloc[[0,1,2],:]    
+    args = Args()  
     elec_sel_meth = 'avg'
     stat_test = 't'
-    nBoot = 10
-    group_data = rdp.collect_mouse_group_rip_data(dd, beh_state, xmin, xmax, 
-                            bin_width)
     gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)
-    # cgroup_data: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
+    # gdata: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
     # where trial_data is a list (of length nTrials) of 
     # dict('rel_mt','mx','my','head_disp','rip_cnt')
     
@@ -49,8 +50,8 @@ def figure_1_stat():
         for iTrial,td in enumerate(md['trial_data']):
             trial_rip_cnt[iTrial,:] = td['rip_cnt']
         # Get significant modulation times
-        smt = cmt.cluster_mass_test(md['bin_cen_t'],trial_rip_cnt,stat_test,nBoot=nBoot)
-        for ci in smt:
-            print(md['bin_cen_t'][ci])
-        sig_mod_times.append(smt)
-    return sig_mod_times
+        smt = cmt.cluster_mass_test(md['bin_cen_t'],trial_rip_cnt,stat_test,
+                                    nBoot=args.nBoot)
+        for ci in smt:           
+            sig_mod_times.append(md['bin_cen_t'][ci])
+    return sig_mod_times,args.nBoot
