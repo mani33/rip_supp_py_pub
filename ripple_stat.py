@@ -59,8 +59,8 @@ def get_figure_2_stat(group_data):
 def get_figure_3_stat(group_data):
     """ Perform statistics on indivisual mouse ripple suppression data.
     Inputs:        
-        group_data = rdp.collect_mouse_group_rip_data(dd, beh_state, xmin, xmax,
-                                args.bin_width)
+        group_data = rdp.collect_mouse_group_rip_data(data_sessions, beh_state, 
+                                                      xmin, xmax,args.bin_width)
         where rdp is ripple data processing module
     Outputs:        
         sig_mod_times - 1d numpy array of bin_cen_t of clusters that are 
@@ -70,7 +70,7 @@ def get_figure_3_stat(group_data):
   
     args = Args()  
     elec_sel_meth = 'avg'
-    stat_test = 'ranksum'
+    stat_test = 't' # 't' or 'signed_rank'
     # # 1. First find signicantly modulated times for each mouse
     # gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)
     # # gdata: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
