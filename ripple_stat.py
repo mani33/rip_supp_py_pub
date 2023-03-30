@@ -77,8 +77,7 @@ def get_figure_3_stat(group_data,**kwargs):
     stat_test = 't' # 't' or 'signed_rank'
     #--------------------------------------------------------------------------
     # 1. First find signicantly modulated times for each mouse
-    gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)
-    print(len(gdata))
+    gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)    
     # gdata: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
     # where trial_data is a list (of length nTrials) of 
     # dict('rel_mt','mx','my','head_disp','rip_cnt')
@@ -94,11 +93,9 @@ def get_figure_3_stat(group_data,**kwargs):
             trial_rip_cnt[iTrial,:] = td['rip_cnt']
         # Get significant modulation times
         smi = cmt.cluster_mass_test(md['bin_cen_t'],trial_rip_cnt,stat_test,
-                                    nBoot=args.nBoot)
-        print('smi',smi.shape)
+                                    nBoot=args.nBoot)        
         # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
-        # significantly modulated
-        print('iMouse',iMouse)
+        # significantly modulated        
         smt = md['bin_cen_t'][smi]
         sig_mod_times_imouse.update({iMouse:smt})
     #--------------------------------------------------------------------------
