@@ -160,7 +160,7 @@ def plot_ripples_hist(rdata, args, hax):
     hax.set_xlabel('Time (s) relative to photostimulation')
     hax.set_ylabel('Ripples/s')
     
-def plot_ripples_as_dots(rdata, args, rax):
+def plot_ripples_as_dots(rdata, args, rax, markersize=1):
     """
     Raster plot of ripples
     Inputs:
@@ -169,11 +169,10 @@ def plot_ripples_as_dots(rdata, args, rax):
     Outputs:
         None
     """
-    siz = 1
     for idx in rdata:
         rip_times = rdata[idx]['rip_evt']
         rax.plot(rip_times, np.ones(rip_times.shape)*idx,\
-                 marker = 'o', markersize = siz, color = 'k', linestyle = 'none')
+                 marker = 'o', markersize=markersize, color = 'k', linestyle = 'none')
     
     # x-axis data is set tight.
     rax.margins(0.00,0.075)
@@ -204,7 +203,7 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax
     if loc=='top':
         y = rax.get_ylim()[1]*0.95
     elif loc=='bottom':
-        y = rax.get_ylim()[0]*(-0.05)
+        y = rax.get_ylim()[0]*(-0.01)
     else:
         raise ValueError('loc param should be either "top" or "bottom"')
         

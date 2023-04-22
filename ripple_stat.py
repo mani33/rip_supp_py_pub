@@ -13,7 +13,7 @@ import numpy as np
 # Common parameters for statistics
 class Args():
     def __init__(self):
-        self.nBoot = 2000
+        self.nBoot = 20
         self.alpha = 0.05/2 # two sided test        
 
 def get_figure_2_stat(group_data):
@@ -69,10 +69,10 @@ def get_figure_3_stat(group_data,**kwargs):
                         significantly modulated when doing mouse-level statistics
         nBoot - number of bootstrap simulations used
     """
-
-    args = Args()  
-    if 'nBoot' in kwargs:
-        args.nBoot = kwargs['nBoot']
+    args = Args()
+    for key,val in kwargs.items():
+        setattr(args,key,val)
+        
     elec_sel_meth = 'avg'
     stat_test = 't' # 't' or 'signed_rank'
     #--------------------------------------------------------------------------
@@ -102,7 +102,7 @@ def get_figure_3_stat(group_data,**kwargs):
     # 2. Perform statistical test on mouse-level, meaning, for each mouse, we first
     # average across trials, and then we do statistics by swapping baseline and
     # post-stim periods for each mouse during bootstrapping
-    bin_cen_t,_,_,mdata = rdp.average_rip_rate_across_mice(group_data, elec_sel_meth)
+    bin_cen_t,_,_,mdata = rdp.average_rip_rate_across_mice(group_data,elec_sel_meth)
     # mdata is 2D numpy array, nMice-by-nTimeBins of ripple rates
     # bin_cen_t - 1D numpy array of bin-center time in sec.
     smi = cmt.cluster_mass_test(bin_cen_t,mdata,stat_test,nBoot=args.nBoot)

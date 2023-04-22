@@ -77,7 +77,7 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len):
        
     sourceFolder = (acq.Ephys & key).fetch('ephys_path', as_dict = False)[0]
     _ , ephysFolder = os.path.split(sourceFolder);
-    vtfile = os.path.join('D:\\ephys\\processed',ephysFolder,'vt_for_python.mat');
+    vtfile = os.path.join('F:\\ephys\\processed',ephysFolder,'vt_for_python.mat');
     data = scipy.io.loadmat(vtfile)
     vtd = data['vt']
     # In the vt dict, 0,1,2 lists are t and, x and y respectively
@@ -326,15 +326,3 @@ def plot_mouse_group_motion(group_data, within_mouse_operator, **kwargs):
     for mdata in all_rr:
         ax2.plot(t_vec, mdata+i, color='k')
         i +=1
-    
-    
-        
-        
-    
-    
-    
-    
-    
-            
-    
-    

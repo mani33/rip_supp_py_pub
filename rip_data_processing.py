@@ -14,6 +14,7 @@ import cont as cont
 import ripples as ripples
 import general_functions as gfun
 import djutils as dju
+import util_py as utp
 
 # Class for default values of parameters
 class Args():
@@ -21,9 +22,8 @@ class Args():
         # Data length pre and post light pulse
         self.xmin = -5.0 # Add sign appropriately. If you want 1sec before light pulse, use -1
         self.xmax = 10.0
-        
-        self.beh_state = 'all' #  beh state to collect ripples from: 'all','rem','nrem','awake'
-        self.bin_width = 100.0 # binning width in msec
+        self.bin_width = 200 # bin width in msec
+        self.beh_state = 'all' #  beh state to collect ripples from: 'all','rem','nrem','awake'       
         self.motion_quantile_to_keep = [1.0]; # below this quantile value, we will retain stimulation trials, list if >1 session
         
         # in sec: time window to detect motion. Can be 4 element [-5 0 2 3] where [-5 0] and [2 3] are two separate windows.
@@ -32,10 +32,10 @@ class Args():
         # Remove trials without ripples?
         self.remove_norip_trials = True
         self.remove_noise_spikes = True
-        self.pre_and_stim_only = True        
+        self.pre_and_stim_only = True
 
 # main function that calls other functions
-def get_processed_rip_data(keys, pulse_per_train, std, minwidth, **kwargs):
+def get_processed_rip_data(keys,pulse_per_train,std,minwidth,**kwargs):
     """ This function takes one or more channel keys as input. Possible input key-value pairs
         are indicated in the Args class.        
         Inputs:
@@ -69,9 +69,6 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, **kwargs):
     # Create binning params
     pre = args.xmin * 1e6 # to microsec
     post = args.xmax * 1e6 # to microsec
-    bw = args.bin_width * 1e3 # Given originally in msec. Change to microsec
-    rbin_edges = np.arange(pre, post, bw)
-    assert any(rbin_edges==0), 'Zero is missing in bin edges'
     
     # Go through each channel key and collect ripple and motion data
     cc = 0
@@ -122,8 +119,7 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, **kwargs):
         # Check if the RipEvents table was populated
         assert rpt.size > 0, 'No ripples! Check if the RipEvents table is populated'
         
-        # Go through each pulse train and collect ripples near by
-        
+        # Go through each pulse train and collect ripples near by        
         for t_idx, ct_on in enumerate(tr_on):
             twin = np.array([pre, post]) + ct_on
             # Pick ripples in window
@@ -267,25 +263,23 @@ def get_ripple_rate(rdata, bin_width, xmin, xmax):
         xmax: a positive number in sec
     
     Outputs:-----------------------------------
-        rip_rate: 1D np array of ripple rate (rip/s)
+        rip_rate: 1D np array of ripple rate (rip/sec)
         bin_edges: 1D np array of bin edges
         bin_cen: 1D np array of bin centers in sec, same length as rip_rate.
     
     """
-
     evt = np.concatenate([v['rip_evt'] for _,v in rdata.items()])
     # Create binedges
     bw =  bin_width/1000
-    be = np.arange(xmin, xmax+bw, bw)
-    # Plot hist
-    counts, bin_edges = np.histogram(evt, be)
-    rip_rate = (counts/len(rdata))/bw
-    bin_cen = bin_edges[:-1]+bw
-    
-    return rip_rate, bin_edges, bin_cen
+    bin_edges,bin_cen = utp.create_psth_bins(xmin,xmax,bw)    
+    # Get histogram counts
+    counts,_ = np.histogram(evt,bin_edges)
+    n_trials = len(rdata)
+    rip_rate = (counts/n_trials)/bw # rip/sec
+        
+    return rip_rate,bin_edges,bin_cen
 
-def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax, 
-                        bin_width, **kwargs):
+def collect_mouse_group_rip_data(data_sessions,beh_state,xmin,xmax,**kwargs):
     """
     For a given list of sessions, collect ripple data.
     Inputs:
@@ -294,15 +288,17 @@ def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax,
                         laser_color, laser_knob, motion_quantile       
         beh_state: behavior state to collect ripples from: 'all','rem','nrem','awake'       
         xmin: a negative number in sec
-        xmax: a positive number in sec
-        bin_width: in millisec
+        xmax: a positive number in sec        
         kwargs: 'pool_repeats', boolean to indicate if data from repeats of a mouse session 
                 should be combined or not. Default is pool_repeats=True.
        
     Outputs:
         group_data : list (mice) of list(channels) of dict (ripple data)
     """
-    
+    tmp_args = Args()
+    for key,val in kwargs.items():
+        setattr(tmp_args,key,val)    
+        
     group_data = [[] for _ in range(data_sessions.shape[0])]
     idx = 0
     """
@@ -330,12 +326,12 @@ def collect_mouse_group_rip_data(data_sessions, beh_state, xmin, xmax,
                 keys[jk].update({'chan_num': ch})
             # keys = [key.update() for key in keys]
             print(keys)
-            rdata, args = get_processed_rip_data (keys, dd_one['pulse_per_train'], 
-                                                  dd_one['std'], dd_one['minwidth'], 
-                                                  beh_state = beh_state, 
-                                                  motion_quantile_tokeep = dd_one['motion_quantile'], 
-                                                  xmin = xmin, xmax = xmax, 
-                                                  bin_width = bin_width)             
+            rdata, args = get_processed_rip_data(
+                                keys, dd_one['pulse_per_train'],
+                                dd_one['std'], dd_one['minwidth'],
+                                beh_state=beh_state,
+                                motion_quantile_tokeep=dd_one['motion_quantile'],
+                                xmin=xmin,xmax=xmax,bin_width=tmp_args.bin_width)
             tdic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[idx].append(tdic)
         print(f'Done with mouse {idx}')
@@ -375,8 +371,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
         nTrials = len(md[0]['rdata'])
         args = md[0]['args']
         bw = args.bin_width/1000
-        bin_edges = np.arange(args.xmin,args.xmax+bw,bw)               
-        bin_cen = bin_edges[:-1]+bw/2
+        bin_edges,bin_cen = utp.create_psth_bins(args.xmin,args.xmax,bw) 
         # Go through each trial. For each channel, bin the trial events
         all_trial_data = []               
         for iTrial in range(nTrials):
@@ -562,23 +557,3 @@ def get_light_pulse_train_info(key, pulse_per_train):
             
        
     return pon, poff, pulse_width, pulse_freq    
-
-# def pool_ripple_data_by_session():
-    
-            
-
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-            
-            
