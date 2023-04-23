@@ -23,7 +23,7 @@ class Args():
         self.xmin = -5.0 # Add sign appropriately. If you want 1sec before light pulse, use -1
         self.xmax = 10.0
         self.bin_width = 200 # bin width in msec
-        self.beh_state = 'all' #  beh state to collect ripples from: 'all','rem','nrem','awake'       
+        self.beh_state = 'nrem' #  beh state to collect ripples from: 'all','rem','nrem','awake'       
         self.motion_quantile_to_keep = [1.0]; # below this quantile value, we will retain stimulation trials, list if >1 session
         
         # in sec: time window to detect motion. Can be 4 element [-5 0 2 3] where [-5 0] and [2 3] are two separate windows.
@@ -35,7 +35,7 @@ class Args():
         self.pre_and_stim_only = True
 
 # main function that calls other functions
-def get_processed_rip_data(keys,pulse_per_train,std,minwidth,**kwargs):
+def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     """ This function takes one or more channel keys as input. Possible input key-value pairs
         are indicated in the Args class.        
         Inputs:
@@ -44,7 +44,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,**kwargs):
             pulse_per_train - how many pulses were given in each train?
             std - list of std values for restricting ripples table
             minwidth - list of minwidth params for restricting ripples table
-            kwargs - user's updated params-values listed in the Args class
+            args -  Args object with updated params-values          
         Outputs:
             rdata - list of dict. len(rdata) = num of trials. Each dict contains the following keys:
                     'rel_mt' - numpy array of time (sec) relative to stim train onset
@@ -52,7 +52,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,**kwargs):
                     'head_disp' - numpy array of head displacement per video frame (pix/frame)
                     'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
                     
-            args - Args class object contaning a bunch of experiment related info.
+            args - Updated Args class object with newly added experiment-related info.
         """        
     # Ensure list type for keys, std and minwidth
     std = std if type(std) is list else [std]
@@ -61,11 +61,6 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,**kwargs):
     # Make sure chan_num exists in keys    
     assert all(['chan_num' in kk for kk in keys]), 'chan_num does not exist in given keys'
     
-    # Update optional params
-    args = Args()
-    for k, v in kwargs.items():
-        setattr(args,k,v)
-
     # Create binning params
     pre = args.xmin * 1e6 # to microsec
     post = args.xmax * 1e6 # to microsec
@@ -279,26 +274,19 @@ def get_ripple_rate(rdata, bin_width, xmin, xmax):
         
     return rip_rate,bin_edges,bin_cen
 
-def collect_mouse_group_rip_data(data_sessions,beh_state,xmin,xmax,**kwargs):
+def collect_mouse_group_rip_data(data_sessions,args):
     """
     For a given list of sessions, collect ripple data.
     Inputs:
         data_sessions : Pandas data frame containing the following columns:
                         animal_id, session_ts, pulse_per_train, pulse_width, chan, std, minwidth, 
                         laser_color, laser_knob, motion_quantile       
-        beh_state: behavior state to collect ripples from: 'all','rem','nrem','awake'       
-        xmin: a negative number in sec
-        xmax: a positive number in sec        
-        kwargs: 'pool_repeats', boolean to indicate if data from repeats of a mouse session 
-                should be combined or not. Default is pool_repeats=True.
+        args -  Args object with updated params-values
        
     Outputs:
         group_data : list (mice) of list(channels) of dict (ripple data)
     """
-    tmp_args = Args()
-    for key,val in kwargs.items():
-        setattr(tmp_args,key,val)    
-        
+            
     group_data = [[] for _ in range(data_sessions.shape[0])]
     idx = 0
     """
@@ -328,10 +316,7 @@ def collect_mouse_group_rip_data(data_sessions,beh_state,xmin,xmax,**kwargs):
             print(keys)
             rdata, args = get_processed_rip_data(
                                 keys, dd_one['pulse_per_train'],
-                                dd_one['std'], dd_one['minwidth'],
-                                beh_state=beh_state,
-                                motion_quantile_tokeep=dd_one['motion_quantile'],
-                                xmin=xmin,xmax=xmax,bin_width=tmp_args.bin_width)
+                                dd_one['std'], dd_one['minwidth'],args)
             tdic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[idx].append(tdic)
         print(f'Done with mouse {idx}')
@@ -392,7 +377,9 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
                     # Collapse (average) across channel
                     # Recreate cgroup_data data structure just like group_data
                     # except that there will be only one collapsed channel now.
-                    rip_cnt = np.mean(hdata,axis=0)                        
+                    rip_cnt = np.mean(hdata,axis=0)
+                case _:
+                    raise ValueError('electrode selection method must be "random" or "avg"')
             # Build trial data structure as a dict
             one_trial_data = {'rel_mt': cdata['rel_mt'],'mx':cdata['mx'],
                               'my':cdata['my'],'head_disp':cdata['head_disp'],
@@ -474,7 +461,7 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     
     return bin_cen, mean_rr, std_rr, all_mouse_rr
 
-def pool_head_disp_across_mice(group_data, within_mouse_operator, **kwargs):
+def pool_head_disp_across_mice(group_data, within_mouse_operator):
     """
     Pool head displacement across mice. We will not normalize within each mouse
     Inputs:

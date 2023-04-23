@@ -56,25 +56,21 @@ def get_figure_2_stat(group_data):
             sig_mod_times.append(md['bin_cen_t'][ci])
     return sig_mod_times,args.nBoot
 
-def get_figure_3_stat(group_data,**kwargs):
+def get_figure_3_stat(group_data,elec_sel_meth,stat_test,nBoot):
     """ Perform statistics on indivisual mouse ripple suppression data.
     Inputs:        
-        group_data = rdp.collect_mouse_group_rip_data(data_sessions, beh_state, 
-                                                      xmin, xmax,args.bin_width)
+        group_data = rdp.collect_mouse_group_rip_data(data_sessions,args)
         where rdp is ripple data processing module
+        elec_sel_meth - 'avg' or 'random'
+        stat_test - 't' or 'ranksum'
+        nBoot - number of replicates for bootstrapping
     Outputs:
         sig_mod_times_imouse - dict(iMouse:1d numpy array)-significant modulation 
                                 times for each mouse     
         sig_mod_times - 1d numpy array of bin_cen_t of clusters that are 
                         significantly modulated when doing mouse-level statistics
-        nBoot - number of bootstrap simulations used
     """
-    args = Args()
-    for key,val in kwargs.items():
-        setattr(args,key,val)
-        
-    elec_sel_meth = 'avg'
-    stat_test = 't' # 't' or 'signed_rank'
+
     #--------------------------------------------------------------------------
     # 1. First find signicantly modulated times for each mouse
     gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)    
@@ -93,7 +89,7 @@ def get_figure_3_stat(group_data,**kwargs):
             trial_rip_cnt[iTrial,:] = td['rip_cnt']
         # Get significant modulation times
         smi = cmt.cluster_mass_test(md['bin_cen_t'],trial_rip_cnt,stat_test,
-                                    nBoot=args.nBoot)        
+                                    nBoot=nBoot)        
         # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
         # significantly modulated        
         smt = md['bin_cen_t'][smi]
@@ -105,9 +101,9 @@ def get_figure_3_stat(group_data,**kwargs):
     bin_cen_t,_,_,mdata = rdp.average_rip_rate_across_mice(group_data,elec_sel_meth)
     # mdata is 2D numpy array, nMice-by-nTimeBins of ripple rates
     # bin_cen_t - 1D numpy array of bin-center time in sec.
-    smi = cmt.cluster_mass_test(bin_cen_t,mdata,stat_test,nBoot=args.nBoot)
+    smi = cmt.cluster_mass_test(bin_cen_t,mdata,stat_test,nBoot=nBoot)
     # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
     # significantly modulated
     sig_mod_times = bin_cen_t[smi]
     
-    return sig_mod_times_imouse,sig_mod_times,args.nBoot
+    return sig_mod_times_imouse,sig_mod_times
