@@ -416,14 +416,14 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
         if elec_sel_meth == 'random':
             chd = md[np.random.randint(n_chan)]
             args = chd['args']
-            mouse_rr, _, bin_cen = get_ripple_rate(chd['rdata'], 
+            mouse_rr,_,bin_cen = get_ripple_rate(chd['rdata'], 
                                                    args.bin_width, 
-                                                   args.xmin, args.xmax)                
+                                                   args.xmin, args.xmax)               
         else: # Other methods that require computing ripple rate
             rip_rate = []
             for chd in md: # loop over channels of each mouse
                 args = chd['args']
-                rd, _, bin_cen = get_ripple_rate(chd['rdata'],args.bin_width, 
+                rd,_,bin_cen = get_ripple_rate(chd['rdata'],args.bin_width, 
                                                    args.xmin, args.xmax)
                 rip_rate.append(rd)
             # Apply selection on the ripple rate
