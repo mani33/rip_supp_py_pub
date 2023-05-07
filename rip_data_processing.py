@@ -24,7 +24,7 @@ class Args():
         self.xmax = 10.0
         self.bin_width = 200 # bin width in msec
         self.beh_state = 'nrem' #  beh state to collect ripples from: 'all','rem','nrem','awake'       
-        self.motion_quantile_to_keep = [1.0]; # below this quantile value, we will retain stimulation trials, list if >1 session
+        self.motion_quantile_to_keep = 1.0; # below this quantile value, we will retain stimulation trials, list if >1 session
         
         # in sec: time window to detect motion. Can be 4 element [-5 0 2 3] where [-5 0] and [2 3] are two separate windows.
         self.motion_det_win = [self.xmin, self.xmax]
@@ -39,9 +39,10 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     """ This function takes one or more channel keys as input. Possible input key-value pairs
         are indicated in the Args class.        
         Inputs:
-            keys - list of dict. Must be a list even if just one dict. When giving multiple keys
-                    user must ensure that all keys had the same light pulse stimulation protocol
-            pulse_per_train - how many pulses were given in each train?
+            keys - list of dict. Must be a list even if just one dict. All keys
+                   must be from the same mouse and same channel and with the 
+                   same light pulse timulation protocol
+            pulse_per_train - int; number of pulses were given in each train
             std - list of std values for restricting ripples table
             minwidth - list of minwidth params for restricting ripples table
             args -  Args object with updated params-values          
@@ -54,13 +55,17 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
                     
             args - Updated Args class object with newly added experiment-related info.
         """        
-    # Ensure list type for keys, std and minwidth
-    std = std if type(std) is list else [std]
-    minwidth = minwidth if type(minwidth) is list else [minwidth]
-    keys = keys if type(keys) is list else [keys]
+    # Data type check for keys, std and minwidth
+    assert (type(keys)==list) and (type(std)==list) and (type(minwidth)==list),\
+    'keys, std and minwidth must be lists'
+    assert len(set([x['animal_id'] for x in keys]))==1, 'all keys must be from the same mouse'
     # Make sure chan_num exists in keys    
     assert all(['chan_num' in kk for kk in keys]), 'chan_num does not exist in given keys'
-    
+    assert len(set([x['chan_num'] for x in keys]))==1, 'all keys must have the same chan_num'
+    # Ensure that each key has its own associated std and minwidth
+    assert (len(keys)==len(std)==len(minwidth)), 'number of keys must match \
+    number of std and minwidth'
+   
     # Create binning params
     pre = args.xmin * 1e6 # to microsec
     post = args.xmax * 1e6 # to microsec
@@ -68,17 +73,18 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     # Go through each channel key and collect ripple and motion data
     cc = 0
     rdata = {}
+    all_pulse_width = set()
+    all_pulse_freq = set()
     for ikey, key in enumerate(keys):
         # Get light pulse train info
         pon_times, poff_times, pulse_width, pulse_freq = get_light_pulse_train_info(key, pulse_per_train)
+        all_pulse_width.add(pulse_width)
+        all_pulse_freq.add(pulse_freq)
         # For plotting purpose, extract one pulse train on and off times in sec
         # We assume that all keys had the same stimulus train parameters, so we pick one key
         if ikey==0:
             one_train_on = (pon_times[0:pulse_per_train] - pon_times[0]) * 1e-6
             one_train_off = (poff_times[0:pulse_per_train] - poff_times[0]) * 1e-6
-            # Extract pulse width,  in ms
-            pulse_width = np.median(poff_times - pon_times)*1e-3
-        
         # Pick the first pulse times in the pulse train for time referencing
         tr_on = pon_times[::pulse_per_train] # shape: (rows,), int64
         tr_off = poff_times[::pulse_per_train] # shape: (rows,), int64
@@ -95,7 +101,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
         # Mark (True/False) good trials by amount of head movement 
         good_trials_mov = filter_trials_by_head_disp(rel_mt, mx, my, 
                                                      args.motion_det_win, 
-                                                     args.motion_quantile_to_keep[ikey])
+                                                     args.motion_quantile_to_keep)
         
         # Mark (True/False) trials by their presence inside given behavioral state (e.g NREM)
         good_trials_beh = filter_trials_by_beh_state(tr_on, tr_off, args.beh_state, key)
@@ -131,16 +137,14 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
                         'head_disp': head_disp, 'rip_evt': re_rel_t}
             cc += 1           
     
-    # Watch out: here we pick these params from the last key of the key list with
-    # the assumption that all keys had same parameters.
+    assert len(all_pulse_freq)==len(all_pulse_width)==1, 'all keys must have\
+        the same pulse frequency and pulse widths'
     args.one_train_on = one_train_on
     args.one_train_off = one_train_off
     args.pulse_width = pulse_width
     args.pulse_freq = pulse_freq
     args.pulse_per_train = pulse_per_train
     args.mouse_id = key['animal_id']
-    args.std = std
-    args.minwidth = minwidth
     args.chan_name = (cont.Chan & key & f'chan_num = {key["chan_num"]}').fetch('chan_name')[0]
     
     return rdata, args
@@ -286,16 +290,14 @@ def collect_mouse_group_rip_data(data_sessions,args):
     Outputs:
         group_data : list (mice) of list(channels) of dict (ripple data)
     """
-            
-    group_data = [[] for _ in range(data_sessions.shape[0])]
-    idx = 0
     """
     To combine repeated sessions from mouse subjects, we will group their row
     indices and iterate through this index groups
     """
     ids = np.array(data_sessions.animal_id)
     uids = np.unique(ids)
-    for m_id in uids:
+    group_data = [[] for _ in range(uids.size)]
+    for idx,m_id in enumerate(uids):
         # Get data slice corresponding to the current mouse
         dd = data_sessions[ids==m_id]        
         keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
@@ -315,12 +317,11 @@ def collect_mouse_group_rip_data(data_sessions,args):
             # keys = [key.update() for key in keys]
             print(keys)
             rdata, args = get_processed_rip_data(
-                                keys, dd_one['pulse_per_train'],
-                                dd_one['std'], dd_one['minwidth'],args)
+                                keys, dd_one['pulse_per_train'].astype(int),
+                                list(dd['std']), list(dd['minwidth']),args)
             tdic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[idx].append(tdic)
-        print(f'Done with mouse {idx}')
-        idx += 1
+        print(f'Done with mouse {idx}')        
     return group_data
 
 def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
@@ -532,8 +533,21 @@ def get_light_pulse_train_info(key, pulse_per_train):
     
     
     # Get pulse width in ms
-    pulse_width = np.median((poff-pon)*1e-3)
+    all_pulse_widths = (poff-pon)*1e-3
+    pulse_width = np.median(all_pulse_widths)
+    # Inform user how many pulses had widths different from the median pulse width
+    minority = all_pulse_widths != pulse_width
+    minority_pulse_widths = all_pulse_widths[minority]   
+    minority_pulse_count = np.where(minority)[0].size
     
+    if minority_pulse_count > 0:
+        # Compute relative difference in the pulse width between majoriy and minority
+        rel_change = 100*(np.abs(np.mean(minority_pulse_widths)-pulse_width)/pulse_width)
+        if rel_change > 1: # 1% tolerance
+            print('%u pulses had widths different from the majority pulse width of %0.2f'
+                  % (minority_pulse_count,pulse_width))
+            print('Pulse widths are:')
+            print(minority_pulse_widths)
     # Compute pulse freq
     if pulse_per_train == 1:
         pulse_freq = np.NaN
