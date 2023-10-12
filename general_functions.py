@@ -52,7 +52,7 @@ def parse_var_args(params,**kwargs):
 #------------------------------------------------------------------------------        
         
 # Function that collects x and y movement tracking coordinates around event times
-def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len):
+def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len=True):
     """Fetches the x and y coordinate points of animal movement around the time of
     events:
         Inputs:
@@ -144,7 +144,40 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len):
                 
     return mt, mx, my, good_trials
         
-
+def rotate_trajectory(rot_cen_x,rot_cen_y,tx,ty,angle):
+    """ Rotate trajectory given by (tx,ty)
+    Inputs:
+        rot_cen_x - x-coordinate of location about which rotation occurs
+        rot_cen_y - y-coordinate of location about which rotation occurs
+        tx - 1d numpy array of x-coordinates of trajectory
+        ty - 1d numpy array of y-coordinates of trajectory
+        angle - radians, angle to be rotated
+    Outputs:
+        rtx - 1d numpy array of x-coordinates of rotated trajectory
+        rty - 1d numpy array of y-coordinates of rotated trajectory
+        
+    Mani Subramaniyan 2023-08-20    
+    """
+    # Rotation function - rotates numpy 2d vector [[x],[y]] by angle theta
+    rot = lambda xy,theta: np.matmul(np.array([[np.cos(theta),-np.sin(theta)],
+                                              [np.sin(theta),np.cos(theta)]]),xy)
+    # Because default rotation occurs about (0,0), we need to recenter if a different
+    # rotation point is asked
+    t1x = tx-rot_cen_x
+    t1y = ty-rot_cen_y
+    xy = np.vstack((t1x,t1y))-[[rot_cen_x],[rot_cen_y]]
+    rxy = rot(xy,angle)
+    # Add the rotation center back
+    rtx = rxy[0,:]-rot_cen_x
+    rty = rxy[1,:]-rot_cen_y
+    return rtx,rty
+    
+    
+    
+    # Rotate the eigen vector and check
+    # evs_rot_led_coord = rot(evs,angle_to_rotate[0])
+    
+    
 def interp_based_event_trig_data_average(t_list, v_list):
     """ Average the data of multiple trials into a single vector. Using linear interpolation, 
     all values will be sampled at the same time point. time vector will be decided by the

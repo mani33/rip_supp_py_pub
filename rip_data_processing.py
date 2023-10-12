@@ -36,8 +36,8 @@ class Args():
 
 # main function that calls other functions
 def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
-    """ This function takes one or more channel keys as input. Possible input key-value pairs
-        are indicated in the Args class.        
+    """ Get ripple data for a single channel of a mouse recorded in one or more 
+        session that used the same stimulation protocol.
         Inputs:
             keys - list of dict. Must be a list even if just one dict. All keys
                    must be from the same mouse and same channel and with the 
@@ -115,6 +115,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
         
         # Get ripple events
         fstr = f'std = {std[ikey]} and minwidth = {minwidth[ikey]}'
+        print(fstr)
         rpt = np.array((ripples.RipEvents & key & fstr).fetch('peak_t'))
         
         # Check if the RipEvents table was populated
@@ -297,7 +298,7 @@ def collect_mouse_group_rip_data(data_sessions,args):
     ids = np.array(data_sessions.animal_id)
     uids = np.unique(ids)
     group_data = [[] for _ in range(uids.size)]
-    for idx,m_id in enumerate(uids):
+    for iMouse,m_id in enumerate(uids):
         # Get data slice corresponding to the current mouse
         dd = data_sessions[ids==m_id]        
         keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
@@ -319,10 +320,32 @@ def collect_mouse_group_rip_data(data_sessions,args):
             rdata, args = get_processed_rip_data(
                                 keys, dd_one['pulse_per_train'].astype(int),
                                 list(dd['std']), list(dd['minwidth']),args)
-            tdic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
-            group_data[idx].append(tdic)
-        print(f'Done with mouse {idx}')        
+            ch_dic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
+            group_data[iMouse].append(ch_dic)
+        print(f'Done with mouse {iMouse}')      
     return group_data
+
+def get_all_chan_mouse_rip_rate_matrix(mouse_group_data,normalize=True):
+    """
+    Inputs: mouse_group_data = collect_mouse_group_rip_data(data_sessions,args)
+            normalize - Boolean, normalize rate by baseline mean rate (bins with bin_cen < 0)
+    Outputs:
+        rip_rate_matrix - 2d numpy array (nTotChanAllMice x nBins) of ripple rate
+        bin_cen - 1d numpy array of bin centers (sec) relative to photostim onset
+        n_chan - list (length = nMice) of number of channels in each mouse
+    """
+    all_rip_rate = []
+    n_chan = [] # list of number of channels in each mouse
+    for md in mouse_group_data:
+        n_chan.append(len(md))
+        for chd in md:            
+            args = chd['args']
+            rip_rate,_,bin_cen = get_ripple_rate(chd['rdata'],args.bin_width,args.xmin,args.xmax)
+            if normalize:
+                rip_rate = rip_rate/np.mean(rip_rate[bin_cen <0])
+            all_rip_rate.append(rip_rate)
+    rip_rate_matrix = np.vstack(all_rip_rate)
+    return rip_rate_matrix,bin_cen,n_chan        
 
 def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
     """

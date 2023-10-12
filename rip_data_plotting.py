@@ -12,12 +12,16 @@ matplotlib.rcParams['pdf.fonttype'] = 42 # to make fonts editable in Illustrator
 #matplotlib.rcParams['svg.fonttype'] = 42
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
 from matplotlib.patches import Rectangle as rect
 import warnings
 import numpy as np
 import plot_helpers as ph
 import general_functions as gfun
 import rip_data_processing as rdp
+import rip_data_plotting as rplt
+import util_py as utp
+
 
 # import scipy.stats as stats 
 
@@ -25,7 +29,29 @@ import rip_data_processing as rdp
 # For inline plots, use %matplotlib inline
 # To save use: plt.savefig('test.pdf',dpi='figure')
      
-        
+def plot_all_chan_mouse_rip_rate_matrix(grdata,wh):
+    """ Plot trial-averaged ripple rate of each channel of each mouse
+    Inputs: grdata = rip_data_processing.collect_mouse_group_rip_data(dd,args)
+            wh = [w,h] width and height in inches of the axis plot box (excluding ticks and labels)
+    """
+    rr,bin_cen,n = rdp.get_all_chan_mouse_rip_rate_matrix(grdata)
+    nChan = np.sum(n)   
+    rplt.set_common_subplot_params(plt)
+    
+    #%%
+    fig,ax = utp.make_axes(plt, wh)
+    bw = grdata[0][0]['args'].bin_width/1000
+    extents = [bin_cen[0]-bw/2,bin_cen[-1]+bw/2,nChan,0]
+    im = ax.imshow(rr,cmap='coolwarm',norm=TwoSlopeNorm(1),extent=extents,origin='upper')
+    # Mark beginning and end of channel group of each mouse
+    yticks = np.cumsum(np.hstack((0, n)))
+    for yt in yticks[1:-2]:
+        ax.plot(ax.get_xlim(),[yt,yt],linestyle='--',color='k',linewidth=0.5)
+    ax.set_yticks(yticks)
+    ax.set_xlabel('Time (s) relative to photostimulation onset')
+    ax.set_ylabel('Mouse #')
+    fig.colorbar(im,location='top',orientation='horizontal',aspect=15,shrink=0.25) 
+    
 def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
     """ Plot ripple data when a pulse or train of pulses of light was given
     Inputs: 
@@ -85,7 +111,7 @@ def add_sup_title(args, fh):
         t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.sess_str[i_sess]} " 
                      f"({args.pulse_per_train} x {args.pulse_width} ms pulse) "  
                 f"{args.pulse_freq} Hz std = {args.std[i_sess]} "
-                f"minwidth = {args.minwidth[i_sess]} motionQ = {args.motion_quantile_to_keep[i_sess]}")
+                f"minwidth = {args.minwidth[i_sess]} {args.beh_state}")
     # Join strings
     title_str = '\n'.join(t_str)
     fh.suptitle(title_str)    
@@ -157,10 +183,13 @@ def plot_ripples_hist(rdata, args, hax):
     # x-axis data is set tight.
     # hax.margins(0.0,0.075)
     hax.set_xlim([args.xmin, args.xmax])
-    hax.set_xlabel('Time (s) relative to photostimulation')
+    hax.set_xlabel('Time (s) relative to photostimulation onset')
     hax.set_ylabel('Ripples/s')
     
-def plot_ripples_as_dots(rdata, args, rax, markersize=1):
+def plot_ripples_as_dots(rdata, args, rax, markersize=1,
+                         xlabel='Time (s) relative to photostimulation onset',
+                         ylabel='Photostimulation trial',
+                         marker='.'):
     """
     Raster plot of ripples
     Inputs:
@@ -172,15 +201,15 @@ def plot_ripples_as_dots(rdata, args, rax, markersize=1):
     for idx in rdata:
         rip_times = rdata[idx]['rip_evt']
         rax.plot(rip_times, np.ones(rip_times.shape)*idx,\
-                 marker = 'o', markersize=markersize, color = 'k', linestyle = 'none')
+                 marker = marker, markersize=markersize, color = 'k', linestyle = 'none')
     
     # x-axis data is set tight.
     rax.margins(0.00,0.075)
     rax.set_xlim([args.xmin, args.xmax])
     # Leave space for light pulse on the top but keep bottom tight
     rax.set_ylim(-2, rax.get_ylim()[1]) 
-    rax.set_xlabel('Time (s) relative to photostimulation')
-    rax.set_ylabel('Photostimulation trial')
+    rax.set_xlabel(xlabel)
+    rax.set_ylabel(ylabel)
 
 def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax, **kwargs):
     """
