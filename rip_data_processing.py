@@ -7,7 +7,9 @@ ripple suppression.
 """
 
 # Get database tables
+import itertools
 from itertools import compress
+import logging
 import numpy as np
 import acq as acq
 import cont as cont
@@ -138,8 +140,14 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
                         'head_disp': head_disp, 'rip_evt': re_rel_t}
             cc += 1           
     
-    assert len(all_pulse_freq)==len(all_pulse_width)==1, 'all keys must have\
-        the same pulse frequency and pulse widths'
+    if not len(all_pulse_freq)==len(all_pulse_width)==1:
+        print('**************************************************************')
+        print('pulse frequencies: ',all_pulse_freq)
+        print('pulse widths: ', all_pulse_width)
+        logging.warning('all keys must have the same pulse frequency and pulse widths\
+                      make sure that the difference in values are acceptable')
+        print('**************************************************************')
+        
     args.one_train_on = one_train_on
     args.one_train_off = one_train_off
     args.pulse_width = pulse_width
@@ -303,23 +311,42 @@ def collect_mouse_group_rip_data(data_sessions,args):
         dd = data_sessions[ids==m_id]        
         keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
        
-        # Go through each channel of the given session
+       
         # It is assumed that all repeated sessions of any mouse have the same 
-        # set of experimental parameters including recording channels. 
+        # set of experimental parameters excluding recording channels. 
         # So parameters come from the first session.
-        dd_one = dd.iloc[0,:]
-        if isinstance(dd_one.chan, str):
-            chans = [int(cc) for cc in dd_one.chan.split(',')]
-        elif isinstance(dd_one.chan,int) | isinstance(dd_one.chan,float):
-            chans = [dd_one.chan]
-        for ch in chans:
-            for jk, key in enumerate(keys):
-                keys[jk].update({'chan_num': ch})
+        dd_one = dd.iloc[0,:]        
+        # When the same experimental condition (say pulse width, std, minwidth,
+        # laser color etc) was repeated several days apart, often recording 
+        # channels were different though some channels overlapped. So, we will 
+        # pool channels across the repeated sessions in which they were recorded.
+        unique_chans = list(itertools.chain.from_iterable([str(x).split(',')  for x in dd.chan]))
+        # if isinstance(dd_one.chan, str):
+        #     chans = [int(cc) for cc in dd_one.chan.split(',')]
+        # elif isinstance(dd_one.chan,int) | isinstance(dd_one.chan,float):
+        #     chans = [dd_one.chan]
+        
+        # Go through each unique channel
+        for ch in unique_chans:
+            ch = int(ch)
+            # Find which sessions had this channel
+            sel_keys,std,minwidth = [],[],[]
+            
+            for iKey,key in enumerate(keys):
+                chans_ikey = [int(x) for x in str(dd.iloc[iKey,:]['chan']).split(',')]
+                if ch in chans_ikey:
+                    key['chan_num'] = ch
+                    sel_keys.append(key)
+                    std.append(dd.iloc[iKey,:]['std'])
+                    minwidth.append(dd.iloc[iKey,:]['minwidth'])
+                
+            # for jk, key in enumerate(keys):
+            #     keys[jk].update({'chan_num': ch})
             # keys = [key.update() for key in keys]
-            print(keys)
+            print(sel_keys)
             rdata, args = get_processed_rip_data(
-                                keys, dd_one['pulse_per_train'].astype(int),
-                                list(dd['std']), list(dd['minwidth']),args)
+                                sel_keys, dd_one['pulse_per_train'].astype(int),
+                                std, minwidth,args)
             ch_dic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[iMouse].append(ch_dic)
         print(f'Done with mouse {iMouse}')      
