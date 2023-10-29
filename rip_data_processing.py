@@ -17,6 +17,8 @@ import ripples as ripples
 import general_functions as gfun
 import djutils as dju
 import util_py as utp
+import copy
+from scipy import interpolate
 
 # Class for default values of parameters
 class Args():
@@ -34,6 +36,8 @@ class Args():
         # Remove trials without ripples?
         self.remove_norip_trials = True
         self.remove_noise_spikes = True
+        self.correct_high_amp_mov_art = True
+        self.n_std_mov_art = 35
         self.pre_and_stim_only = True
 
 # main function that calls other functions
@@ -139,7 +143,9 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             rdata[cc] = {'rel_mt': rel_mt[t_idx], 'mx': mx[t_idx], 'my': my[t_idx],\
                         'head_disp': head_disp, 'rip_evt': re_rel_t}
             cc += 1           
-    
+        # Remove high amplitude head disp artifacts
+        if args.correct_high_amp_mov_art:
+            correct_abnorm_high_mov_artifacts(rdata,n_std=args.n_std_mov_art)
     if not len(all_pulse_freq)==len(all_pulse_width)==1:
         print('**************************************************************')
         print('pulse frequencies: ',all_pulse_freq)
@@ -415,7 +421,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
             # Motion data are same for all channels. So pick those from
             # the first channel
             cdata = md[0]['rdata'][iTrial]
-            match elec_sel_meth: 
+            match elec_sel_meth:
                 case 'random':
                     chd = md[np.random.randint(nChan)]
                     evt_t = chd['rdata'][iTrial]['rip_evt']
@@ -516,10 +522,10 @@ def pool_head_disp_across_mice(group_data, within_mouse_operator):
     """
     Pool head displacement across mice. We will not normalize within each mouse
     Inputs:
-        group_data : list (mice) of list(channels) of dict (ripple data), this is an output from
+        group_data - list (mice) of list(channels) of dict (ripple data), this is an output from
                      collect_mouse_group_rip_data(...) function call. 
-        within_mouse_operator: str, should be 'mean' or 'median' - tells you if mean
-                              or median is computed across trials within a mouse    
+        within_mouse_operator - str, should be 'mean' or 'median' - tells you if mean
+                              or median is computed across trials within a mouse 
     Outputs: 
         t_vec - 1D numpy array of time(sec) relative to stimulus onset
         mean_rr - 1D numpy array, mean head disp 
@@ -531,8 +537,7 @@ def pool_head_disp_across_mice(group_data, within_mouse_operator):
     all_rr = []
     for md in group_data: # loop over mice       
         # For each mouse pick head disp data     
-        crd = md[0]['rdata']
-        
+        crd = copy.deepcopy(md[0]['rdata'])        
         n = len(crd)
         t_list = []
         v_list = []
@@ -607,4 +612,44 @@ def get_light_pulse_train_info(key, pulse_per_train):
         pulse_freq = 1/(np.median(np.diff(train_on))*1e-6)
             
        
-    return pon, poff, pulse_width, pulse_freq    
+    return pon, poff, pulse_width, pulse_freq   
+
+def correct_abnorm_high_mov_artifacts(rdata,n_std=10):
+    """ Remove data points with abnormally high amplitude of head displacement
+        and replace them with interpolated datapoints.
+    Inputs:
+        rdata - list of dict, output of get_processed_rip_data(...) function call
+        n_std - number of standard deviations (of 'head_disp' data of all trials pooled)
+                used as threshold above which data points will be considered
+                as artifacts.
+    Output:
+        No output required as the correction will happen 'in place' so that
+        the rdata dict will automatically reflect the corrections.
+    """
+    yy = [y['head_disp'] for _,y in rdata.items()]
+    yy = np.concatenate(yy)
+    s = np.nanstd(yy)
+    md = np.nanmedian(yy)
+    th = md+(n_std*s)
+    trials_with_art = []
+    for iTrial,rd in rdata.items():
+        y = rd['head_disp']
+        t = rd['rel_mt']
+        # Remove outliers  
+        outliers = y > th
+        if np.any(outliers):
+            trials_with_art.append(iTrial)
+            sel = (~outliers) & ~np.isnan(y)
+            gt = t[sel]
+            gy = y[sel]
+            tck = interpolate.splrep(gt,gy)
+            gout = interpolate.splev(t[outliers],tck)
+            # The following line is equivalent to rdata[iTrial]['head_disp'][outliers] = gout
+            # because in the line y = rd['head_disp], y copies the reference to
+            # data. So when y gets updated, the original rdata gets updated. This
+            # is also the reason why we don't need to return rdata.
+            y[outliers] = gout
+    if len(trials_with_art)>0:
+        print('Trials for which artifacts corrected: ',trials_with_art)
+        
+   
