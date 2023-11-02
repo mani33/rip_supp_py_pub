@@ -652,4 +652,42 @@ def correct_abnorm_high_mov_artifacts(rdata,n_std=10):
     if len(trials_with_art)>0:
         print('Trials for which artifacts corrected: ',trials_with_art)
         
-   
+def convert_motion_traj_to_inst_speed(t,px,py):
+    """ 
+    Convert mouse motion in pixels to millimeter using video calibration
+        Inputs:
+            t  - 1d numpy array (size n) time (sec)
+            px - 1d numpy array (size n) of x-coordinates of the LED on mouse head
+            py - 1d numpy array (size n) of y-coordinates of the LED on mouse head
+        Outputs:
+            s - 1d numpy array (size n-1) of instantaneous speed mm/sec
+        
+        Mani Subramaniyan 2023-11-01
+        
+    The constants used here were taken from the file:
+    'C:\Users\maniv\Documents\ripples_manuscript\data\video_size_calibration.pkl'
+    To avoid loading everytime, I have hard-coded these numbers here. If you
+    change the video calibration info, these numbers should be updated
+    accordingly. 
+    
+    """
+    mm_per_pix_x = 0.47047365470852015
+    b = np.array([ 3.93429543e+02, -7.32063842e-02])
+    dt = np.median(np.diff(t)) # should be close to 1/29.97
+    cage_width_mm = 180
+    dx = np.diff(px)  
+    dy = np.diff(py)
+    # Get the mid point of consecutive px values to get the 
+    # y scaling factor corresponding to x values
+    x = (px[0:-1] + px[1:])/2
+    # Scale dx and dy according to video calibration
+    dx_mm = dx*mm_per_pix_x
+    # Because the pixel to mm conversion factor changes as a function of
+    # x (due to video camera angle), we need to compute this factor for
+    # all x in our trial.
+    mm_per_pix_y = cage_width_mm/(b[0]+b[1]*x)
+    dy_mm = dy*mm_per_pix_y
+    dd = np.sqrt((dx_mm**2)+(dy_mm**2))
+    s = dd/dt
+    return s
+        
