@@ -135,8 +135,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             cmx = mx[t_idx]
             cmy = my[t_idx]
             head_disp = np.sqrt(np.diff(cmx)**2 + np.diff(cmy)**2)
-            # Add a filler value to compensate for one sample loss due to diff
-            head_disp = np.append(head_disp, np.nan)
+            # # Add a filler value to compensate for one sample loss due to diff
+            # head_disp = np.append(head_disp, np.nan)
           
             # Center ripple event times also as above
             re_rel_t = (sel_rt - ct_on)*1e-6
@@ -518,19 +518,20 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     
     return bin_cen, mean_rr, std_rr, all_mouse_rr
 
-def pool_head_disp_across_mice(group_data, within_mouse_operator):
+def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
     """
     Pool head displacement across mice. We will not normalize within each mouse
     Inputs:
         group_data - list (mice) of list(channels) of dict (ripple data), this is an output from
-                     collect_mouse_group_rip_data(...) function call. 
+                     collect_mouse_group_rip_data(...) function call.
+        metric - string; must be either 'disp' (head displacement) or 'inst_speed'
         within_mouse_operator - str, should be 'mean' or 'median' - tells you if mean
                               or median is computed across trials within a mouse 
     Outputs: 
         t_vec - 1D numpy array of time(sec) relative to stimulus onset
-        mean_rr - 1D numpy array, mean head disp 
+        mean_rr - 1D numpy array, mean head movement metric; unit is mm for disp, mm/s for inst_speed 
         std_rr - 1D numpy array, standard deviation of each time bin
-        all_rr - 2D numpy array, nMice-by-nTimeBins of head disp
+        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric
     MS 2022-03-14
         
     """
@@ -540,15 +541,36 @@ def pool_head_disp_across_mice(group_data, within_mouse_operator):
         crd = copy.deepcopy(md[0]['rdata'])        
         n = len(crd)
         t_list = []
-        v_list = []
+        vx_list = []
+        vy_list = []
         for jj in range(n):
             t_list.append(crd[jj]['rel_mt'])
-            v_list.append(crd[jj]['head_disp'])
+            vx_list.append(crd[jj]['mx'])
+            vy_list.append(crd[jj]['my'])
         
-        # Here we compute a common time vector for all stimulation trials. Also,
-        # motion corresponding to the bin centers are computed using interpolation
-        t_vec, mi_list = gfun.interp_based_event_trig_data_average(t_list, v_list)
+        # Use interpolation and compute a common time vector for all stimulation 
+        # trials, and the x and y coordinates corresponding to the common time points.
+        t_vec, mxi_list = gfun.interp_based_event_trig_data_average(t_list, vx_list)
+        _, myi_list = gfun.interp_based_event_trig_data_average(t_list, vy_list)
         
+        # Compute head displacement  or instantaneuous speed 
+        # using movement info from two adjacent video frames        
+        # Create time bin centers
+        ifi = np.median(np.diff(t_vec)) # inter-frame-interval
+        t_bin_cen = t_vec[0:-1]+ifi/2
+        
+        # Compute head displacement in mm
+        d_array = [convert_motion_traj_to_inst_disp(px,py) \
+             for px,py in zip(mxi_list,myi_list)]
+            
+        match metric:
+            case 'inst_speed':
+                mi_list = [di/ifi for di in d_array] # mm/sec
+            case 'disp':
+                mi_list = d_array # mm
+            case _:
+                raise ValueError('metric must be either inst_speed or disp')
+                    
         # Pool data within mouse: 
         # first change into 2D array where rows are trials
         mi_array = np.stack(mi_list, axis=0)
@@ -566,7 +588,7 @@ def pool_head_disp_across_mice(group_data, within_mouse_operator):
     mean_rr = np.mean(all_rr, axis=0)
     std_rr = np.std(all_rr, axis=0)
     
-    return t_vec, mean_rr, std_rr, all_rr
+    return t_bin_cen, mean_rr, std_rr, all_rr
                 
  
 def get_light_pulse_train_info(key, pulse_per_train):
@@ -634,7 +656,10 @@ def correct_abnorm_high_mov_artifacts(rdata,n_std=10):
     trials_with_art = []
     for iTrial,rd in rdata.items():
         y = rd['head_disp']
-        t = rd['rel_mt']
+        # head_disp was calculated with two adjacent points leaving the length 
+        # of y one less than that of t. So we will exclude the last time point.
+        # We can do this because the exact value of t is unimportant        
+        t = rd['rel_mt'][:-1] 
         # Remove outliers  
         outliers = y > th
         if np.any(outliers):
@@ -652,28 +677,25 @@ def correct_abnorm_high_mov_artifacts(rdata,n_std=10):
     if len(trials_with_art)>0:
         print('Trials for which artifacts corrected: ',trials_with_art)
         
-def convert_motion_traj_to_inst_speed(t,px,py):
-    """ 
-    Convert mouse motion in pixels to millimeter using video calibration
-        Inputs:
-            t  - 1d numpy array (size n) time (sec)
-            px - 1d numpy array (size n) of x-coordinates of the LED on mouse head
-            py - 1d numpy array (size n) of y-coordinates of the LED on mouse head
-        Outputs:
-            s - 1d numpy array (size n-1) of instantaneous speed mm/sec
+def convert_motion_traj_to_inst_disp(px,py):    
+    # Convert mouse motion in pixels to millimeter using video calibration
+    #     Inputs:   #         
+    #         px - 1d numpy array (size n) of x-coordinates of the LED on mouse head
+    #         py - 1d numpy array (size n) of y-coordinates of the LED on mouse head
+    #    Outputs:
+    #         d - 1d numpy array (size n-1) of instantaneous displacement (mm)         
+    #     
+    #     Mani Subramaniyan 2023-11-10
+    #     
+    # The constants used here were taken from the file:
+    # r'C:\Users\maniv\Documents\ripples_manuscript\data\video_size_calibration.pkl'
+    # To avoid loading everytime, I have hard-coded these numbers here. If you
+    # change the video calibration info, these numbers should be updated
+    # accordingly.
         
-        Mani Subramaniyan 2023-11-01
-        
-    The constants used here were taken from the file:
-    'C:\Users\maniv\Documents\ripples_manuscript\data\video_size_calibration.pkl'
-    To avoid loading everytime, I have hard-coded these numbers here. If you
-    change the video calibration info, these numbers should be updated
-    accordingly. 
-    
-    """
     mm_per_pix_x = 0.47047365470852015
     b = np.array([ 3.93429543e+02, -7.32063842e-02])
-    dt = np.median(np.diff(t)) # should be close to 1/29.97
+    # dt = np.median(np.diff(t)) # should be close to 1/29.97
     cage_width_mm = 180
     dx = np.diff(px)  
     dy = np.diff(py)
@@ -687,7 +709,7 @@ def convert_motion_traj_to_inst_speed(t,px,py):
     # all x in our trial.
     mm_per_pix_y = cage_width_mm/(b[0]+b[1]*x)
     dy_mm = dy*mm_per_pix_y
-    dd = np.sqrt((dx_mm**2)+(dy_mm**2))
-    s = dd/dt
-    return s
+    d = np.sqrt((dx_mm**2)+(dy_mm**2))
+    
+    return d
         
