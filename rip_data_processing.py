@@ -529,9 +529,9 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
                               or median is computed across trials within a mouse 
     Outputs: 
         t_vec - 1D numpy array of time(sec) relative to stimulus onset
-        mean_rr - 1D numpy array, mean head movement metric; unit is mm for disp, mm/s for inst_speed 
-        std_rr - 1D numpy array, standard deviation of each time bin
-        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric
+        mean_rr - 1D numpy array, across-mice mean head movement metric; unit is mm for disp, mm/s for inst_speed 
+        std_rr - 1D numpy array, across-mice standard deviation of each time bin
+        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric (mean or median)
     MS 2022-03-14
         
     """
