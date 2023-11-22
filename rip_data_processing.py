@@ -58,6 +58,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
                     'mx','my' - numpy array of tracker LED x and y coodinate respectively
                     'head_disp' - numpy array of head displacement per video frame (pix/frame)
                     'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
+                    'session_start_time' - session start time of the trial.
                     
             args - Updated Args class object with newly added experiment-related info.
         """        
@@ -141,7 +142,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             # Center ripple event times also as above
             re_rel_t = (sel_rt - ct_on)*1e-6
             rdata[cc] = {'rel_mt': rel_mt[t_idx], 'mx': mx[t_idx], 'my': my[t_idx],\
-                        'head_disp': head_disp, 'rip_evt': re_rel_t}
+                        'head_disp': head_disp, 'rip_evt': re_rel_t,
+                        'session_start_time':key['session_start_time']}
             cc += 1           
         # Remove high amplitude head disp artifacts
         if args.correct_high_amp_mov_art:
@@ -315,9 +317,7 @@ def collect_mouse_group_rip_data(data_sessions,args):
     for iMouse,m_id in enumerate(uids):
         # Get data slice corresponding to the current mouse
         dd = data_sessions[ids==m_id]        
-        keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
-       
-       
+        sess_keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
         # It is assumed that all repeated sessions of any mouse have the same 
         # set of experimental parameters excluding recording channels. 
         # So parameters come from the first session.
@@ -326,36 +326,26 @@ def collect_mouse_group_rip_data(data_sessions,args):
         # laser color etc) was repeated several days apart, often recording 
         # channels were different though some channels overlapped. So, we will 
         # pool channels across the repeated sessions in which they were recorded.
-        unique_chans = list(itertools.chain.from_iterable([str(x).split(',')  for x in dd.chan]))
-        # if isinstance(dd_one.chan, str):
-        #     chans = [int(cc) for cc in dd_one.chan.split(',')]
-        # elif isinstance(dd_one.chan,int) | isinstance(dd_one.chan,float):
-        #     chans = [dd_one.chan]
-        
+        unique_chans = np.unique(list(itertools.chain.from_iterable([str(x).split(',')  for x in dd.chan])))
+                
         # Go through each unique channel
         for ch in unique_chans:
             ch = int(ch)
             # Find which sessions had this channel
             sel_keys,std,minwidth = [],[],[]
-            
-            for iKey,key in enumerate(keys):
-                chans_ikey = [int(x) for x in str(dd.iloc[iKey,:]['chan']).split(',')]
-                if ch in chans_ikey:
-                    key['chan_num'] = ch
-                    sel_keys.append(key)
+            # Some channels may not be in all sessions
+            for iKey,sess_key in enumerate(sess_keys):
+                chans_of_ikey = [int(x) for x in str(dd.iloc[iKey,:]['chan']).split(',')]
+                if ch in chans_of_ikey:
+                    sess_key['chan_num'] = ch
+                    sel_keys.append(sess_key)
                     std.append(dd.iloc[iKey,:]['std'])
-                    minwidth.append(dd.iloc[iKey,:]['minwidth'])
-                
-            # for jk, key in enumerate(keys):
-            #     keys[jk].update({'chan_num': ch})
-            # keys = [key.update() for key in keys]
-            print(sel_keys)
-            rdata, args = get_processed_rip_data(
-                                sel_keys, dd_one['pulse_per_train'].astype(int),
+                    minwidth.append(dd.iloc[iKey,:]['minwidth'])            
+            rdata, args = get_processed_rip_data(sel_keys, dd_one['pulse_per_train'].astype(int),
                                 std, minwidth,args)
-            ch_dic = {'animal_id': keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
+            ch_dic = {'animal_id': sess_keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[iMouse].append(ch_dic)
-        print(f'Done with mouse {iMouse}')      
+        print(f'Done with mouse {iMouse}')     
     return group_data
 
 def get_all_chan_mouse_rip_rate_matrix(mouse_group_data,normalize=True):
@@ -382,11 +372,10 @@ def get_all_chan_mouse_rip_rate_matrix(mouse_group_data,normalize=True):
 
 def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
     """
-    For each photostim trial of a mouse, we will 'pool' data from all available 
-    channels. The pooling does not necessarily mean getting rip events from all
-    channels. For example, one method to collapse all channel data will be to
-    pick one random channel. Alternatively, we can average the number of ripples
-    in a bin across all available channels. We need to do this trial wise for
+    Within a given recording session, for each photostim trial, 
+    we will average binned ripple counts across all available channels. Then, we
+    will aggregate the averaged trial data from all available recording sessions 
+    from a given mouse. We need to do this trial wise data for
     statistical tests on individual mice.
     
     Inputs:
@@ -400,6 +389,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
                         'mx','my' - numpy array of tracker LED x and y coodinate respectively
                         'head_disp' - numpy array of head displacement per video frame (pix/frame)
                         'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
+                        'session_start_time' - scalar; session start time of the trial
         elec_sel_meth: str, should be one of 'avg' or'random'
     Outputs:
         cgroup_data: list(of length nMice) of dict('animal_id','args','trial_data') where
@@ -407,49 +397,71 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
                     dict('rel_mt','mx','my','head_disp','bin_cen_t','rip_cnt')                 
     """ 
     cgroup_data = []
-    # For each mouse and each trial, pick a channel or average across channels
-    for iMouse,md in enumerate(group_data): # loop over mice
-        nChan = len(md)                
-        nTrials = len(md[0]['rdata'])
-        args = md[0]['args']
-        bw = args.bin_width/1000
-        bin_edges,bin_cen = utp.create_psth_bins(args.xmin,args.xmax,bw) 
-        # Go through each trial. For each channel, bin the trial events
-        all_trial_data = []               
-        for iTrial in range(nTrials):
-            hdata = np.zeros((nChan,bin_cen.size))
-            # Motion data are same for all channels. So pick those from
-            # the first channel
-            cdata = md[0]['rdata'][iTrial]
-            match elec_sel_meth:
-                case 'random':
-                    chd = md[np.random.randint(nChan)]
-                    evt_t = chd['rdata'][iTrial]['rip_evt']
-                    rip_cnt,_ = np.histogram(evt_t,bin_edges)
-                case 'avg':
-                    for iChan in range(nChan):
-                        evt_t = md[iChan]['rdata'][iTrial]['rip_evt']
-                        # Bin the event times
-                        hdata[iChan,:],_ = np.histogram(evt_t,bin_edges)                      
-                    # Collapse (average) across channel
-                    # Recreate cgroup_data data structure just like group_data
-                    # except that there will be only one collapsed channel now.
-                    rip_cnt = np.mean(hdata,axis=0)
-                case _:
-                    raise ValueError('electrode selection method must be "random" or "avg"')
-            # Build trial data structure as a dict
-            one_trial_data = {'rel_mt': cdata['rel_mt'],'mx':cdata['mx'],
-                              'my':cdata['my'],'head_disp':cdata['head_disp'],
-                              'rip_cnt':rip_cnt}
-            all_trial_data.append(one_trial_data)
+    args = group_data[0][0]['args']
+    bw = args.bin_width/1000
+    bin_edges,bin_cen = utp.create_psth_bins(args.xmin,args.xmax,bw) 
+    # Loop through each mouse
+    for iMouse,md in enumerate(group_data):
+        # To find out how many recording sessions were there for this mouse:
+        sess_starts = [md[i]['rdata'][0]['session_start_time'] for i in range(len(md))]
+        nMouseChan = len(sess_starts)
+        unique_starts = np.unique(sess_starts)        
+        # Go through each unique recording session and average each trial data
+        # across the channels of that session
+        all_trial_data = []
+        for sess_start in unique_starts:
+            # Check each channel data and if that channel belongs to the current
+            # recording session, retain it for later averaging
+            sess_chan_data = []
+            for iChan in range(nMouseChan):
+                # Analyze the trials' session start time to check if any belong
+                # to the current session
+                trial_sess_starts = np.array([x['session_start_time'] for _,x in md[iChan]['rdata'].items()])
+                sel_ind = np.nonzero(trial_sess_starts==sess_start)[0]
+                # Pick trials that belonged to the current session
+                if sel_ind.size !=0:
+                    sess_chan_data.append(copy.deepcopy([md[iChan]['rdata'][i] for i in sel_ind]))
+            # Average each trial data across all the channels of the given session
+            # All channels will have the same number of trials
+            nTrials = len(sess_chan_data[0])
+            sess_n_chan = len(sess_chan_data)
+            for iTrial in range(nTrials):
+                # Motion data are same for all channels. So pick those from
+                # the first channel
+                cdata = sess_chan_data[0][iTrial]
+                hdata = np.zeros((sess_n_chan,bin_cen.size))                
+                match elec_sel_meth:
+                    case 'avg':
+                        # Average current trial data from all channels of the current session
+                       for iSessChan in range(sess_n_chan):
+                           evt_t = sess_chan_data[iSessChan][iTrial]['rip_evt']
+                           # Bin the event times
+                           hdata[iSessChan,:],_ = np.histogram(evt_t,bin_edges)                           
+                       # Collapse (average) across channels                       
+                       rip_cnt = np.mean(hdata,axis=0)
+                    case _:
+                        raise ValueError('electrode selection method must be "avg"')
+                # Recreate cgroup_data data structure so it looks like group_data
+                # except that there will be only one collapsed channel now.
+                # Build trial data structure as a dict
+                one_trial_data = {'rel_mt': cdata['rel_mt'],'mx':cdata['mx'],
+                                  'my':cdata['my'],'head_disp':cdata['head_disp'],
+                                  'rip_cnt':rip_cnt,
+                                  'session_start_time':cdata['session_start_time']}
+                # This list will accumulate trials of all sessions of the
+                # current mouse
+                all_trial_data.append(one_trial_data)
+            
         one_mouse_data = {'animal_id':md[0]['animal_id'],'args':md[0]['args'],
                           'bin_cen_t':bin_cen,'trial_data':all_trial_data}
         cgroup_data.append(one_mouse_data)
-    return cgroup_data                    
-    
+        
+    return cgroup_data
+        
+        
 def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     """
-    When multiple electrodes had ripples, pick one based on given selection method.
+    When multiple electrodes had ripples, combine their data based on given selection method.
     Inputs:
         group_data : list (mice) of list(channels) of dict (ripple data), this is an output from
                      collect_mouse_group_rip_data(...) function call.       

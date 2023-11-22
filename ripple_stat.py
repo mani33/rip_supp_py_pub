@@ -16,8 +16,9 @@ class Args():
         self.nBoot = 20
         self.alpha = 0.05/2 # two sided test        
 
-def get_sig_mod_times(group_data,elec_sel_meth,stat_test,nBoot):
-    """ Perform statistics on indivisual mouse ripple suppression data.
+def get_sig_mod_times_for_each_mouse(group_data,elec_sel_meth,stat_test,nBoot):
+    """ For each mouse, compute significance of modulation at each time point 
+    after light pulse onset.
     Inputs:        
         group_data = rdp.collect_mouse_group_rip_data(data_sessions,args)
         where rdp is ripple data processing module
@@ -25,22 +26,21 @@ def get_sig_mod_times(group_data,elec_sel_meth,stat_test,nBoot):
         stat_test - 't' or 'ranksum'
         nBoot - number of replicates for bootstrapping
     Outputs:
-        sig_mod_times_imouse - dict(iMouse:1d numpy array)-significant modulation 
-                                times for each mouse     
-        sig_mod_times - 1d numpy array of bin_cen_t of clusters that are 
-                        significantly modulated when doing mouse-level statistics
+        sig_mod_times_imouse - dict(animal_id:1d numpy array)-significant modulation 
+                                times for each mouse
     """
 
     #--------------------------------------------------------------------------
-    # 1. First find signicantly modulated times for each mouse
+    # Find signicantly modulated times for each mouse
     gdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)    
     # gdata: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
     # where trial_data is a list (of length nTrials) of 
     # dict('rel_mt','mx','my','head_disp','rip_cnt')
     
     # Go through each mouse and get the times of significant modulation
-    sig_mod_times_imouse = {} # for individual mouse statistics   
+    sig_mod_times_imouse = {} # for individual mouse statistics  
     for iMouse,md in enumerate(gdata):
+        mouse_id = md['animal_id']
         # catenate trial data into a matrix
         nTrials = len(md['trial_data'])
         nBins = md['bin_cen_t'].size
@@ -53,9 +53,25 @@ def get_sig_mod_times(group_data,elec_sel_meth,stat_test,nBoot):
         # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
         # significantly modulated        
         smt = md['bin_cen_t'][smi]
-        sig_mod_times_imouse.update({iMouse:smt})
-    #--------------------------------------------------------------------------
-    # 2. Perform statistical test on mouse-level, meaning, for each mouse, we first
+        sig_mod_times_imouse.update({mouse_id:smt})   
+    
+    return sig_mod_times_imouse
+
+def get_sig_mod_times_for_mouse_population(group_data,elec_sel_meth,stat_test,nBoot):
+    """ For the entire mouse population, compute significance of modulation at 
+    each time point after light pulse onset.
+    Inputs:        
+        group_data = rdp.collect_mouse_group_rip_data(data_sessions,args)
+        where rdp is ripple data processing module
+        elec_sel_meth - 'avg' or 'random'
+        stat_test - 't' or 'ranksum'
+        nBoot - number of replicates for bootstrapping
+    Outputs:        
+        sig_mod_times - 1d numpy array of bin_cen_t of clusters that are 
+                        significantly modulated when doing mouse-level statistics
+    """
+
+    # Perform statistical test on mouse-level, meaning, for each mouse, we first
     # average across trials, and then we do statistics by swapping baseline and
     # post-stim periods for each mouse during bootstrapping
     bin_cen_t,_,_,mdata = rdp.average_rip_rate_across_mice(group_data,elec_sel_meth)
@@ -66,4 +82,4 @@ def get_sig_mod_times(group_data,elec_sel_meth,stat_test,nBoot):
     # significantly modulated
     sig_mod_times = bin_cen_t[smi]
     
-    return sig_mod_times_imouse,sig_mod_times
+    return sig_mod_times
