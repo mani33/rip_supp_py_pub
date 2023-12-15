@@ -461,24 +461,29 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
         
 def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     """
-    When multiple electrodes had ripples, combine their data based on given selection method.
+    Normalize ripple rate of each mouse by its own baseline. Then average the
+    normalized ripple rate across mice. When multiple electrodes had ripples, 
+    combine their data based on given selection method.
     Inputs:
-        group_data : list (mice) of list(channels) of dict (ripple data), this is an output from
-                     collect_mouse_group_rip_data(...) function call.       
-        elec_sel_meth: str, should be one of 'avg','random','max_effect', 'max_baseline_rate'
-                      When more than one electrode had ripples, tells you which electrode to pick.
+        group_data : list (mice) of list(channels) of dict (ripple data), 
+                    this is an output from collect_mouse_group_rip_data(...) 
+                    function call.       
+        elec_sel_meth: str, should be one of 'avg','random','max_effect', 
+                    'max_baseline_rate'. When more than one electrode had 
+                    ripples, tells you which electrode to pick.
         kwargs:
-            'light_effect_win': 2-element list of bounds (in sec) of the light mediated effect.
+            'light_effect_win': 2-element list of bounds (in sec) of the 
+            light mediated effect.
 
     Outputs: 
         bin_cen - 1D numpy array of bin-center time in sec.
         mean_rr - 1D numpy array, mean ripple rate(Hz)
         std_rr - 1D numpy array, standard deviation of each time bin
         all_mouse_rr - 2D numpy array, nMice-by-nTimeBins of ripple rates
-    MS 2022-03-02
-        
+    
+    MS 2022-03-02        
     """
-    all_rr = []
+    all_rr_norm = []
     for md in group_data: # loop over mice       
         # For each mouse pick a channel or average across channels
         n_chan = len(md)
@@ -489,39 +494,27 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
                                                    args.bin_width, 
                                                    args.xmin, args.xmax)               
         else: # Other methods that require computing ripple rate
-            rip_rate = []
+            norm_rip_rate = []
             for chd in md: # loop over channels of each mouse
                 args = chd['args']
                 rd,_,bin_cen = get_ripple_rate(chd['rdata'],args.bin_width, 
                                                    args.xmin, args.xmax)
-                rip_rate.append(rd)
+                # Normalize the ripple rate for each channel by the mean ripple
+                # rate during baseline period (i.e., period until stim onset time)
+                # This method will give equal weight to all channels
+                norm_rd = rd/np.mean(rd[bin_cen < 0])
+                norm_rip_rate.append(norm_rd)
             # Apply selection on the ripple rate
-            rip_rate = np.array(rip_rate)
+            norm_rip_rate = np.array(norm_rip_rate)
             match elec_sel_meth:
                 case 'avg':
-                    mouse_rr = np.mean(rip_rate, axis=0)
-                case 'max_effect':
-                    # Select time window where effect is expected
-                    assert 'light_effect_win' in kwargs, 'You must provide "light_effect_win" eg. [0,5]'
-                    w = kwargs['light_effect_win']
-                    # First normalize ripple rate to baseline so that we can identify
-                    # channel with max suppression effect
-                    normfn = lambda rr: rr/np.mean(rr[bin_cen < 0])
-                    rip_rate_norm = np.apply_along_axis(normfn, 1, rip_rate)                
-                    edata = rip_rate_norm[:, (bin_cen >= w[0]) & (bin_cen < w[1])]
-                    # Find channel with minimum ripple rate in the light effect window
-                    max_supp_ch_ind = np.mean(edata, axis=1).argmin()
-                    mouse_rr = rip_rate[max_supp_ch_ind,:]
-                case 'max_baseline_rate':
-                    edata = rip_rate[:, bin_cen < 0]
-                    max_ch_ind = np.mean(edata, axis=1).argmax()
-                    mouse_rr = rip_rate[max_ch_ind, :]
+                    norm_mouse_rr = np.mean(norm_rip_rate, axis=0)
                 case _:
                     raise ValueError("The provided method %s is not implemented\n" % elec_sel_meth)                
-        all_rr.append(mouse_rr)
+        all_rr_norm.append(norm_mouse_rr)
     
-    # Normalize ripple rate to baseline before averaging across mice
-    all_rr_norm = [rr/np.mean(rr[bin_cen < 0]) for rr in all_rr]
+    # # Normalize ripple rate to baseline before averaging across mice
+    # all_rr_norm = [rr/np.mean(rr[bin_cen < 0]) for rr in all_rr]
     
     # Average across mice
     all_mouse_rr = np.array(all_rr_norm)
@@ -572,7 +565,7 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
         t_bin_cen = t_vec[0:-1]+ifi/2
         
         # Compute head displacement in mm
-        d_array = [convert_motion_traj_to_inst_disp(px,py) \
+        d_array = [convert_motion_traj_to_inst_disp(px,py)[0] \
              for px,py in zip(mxi_list,myi_list)]
             
         match metric:
@@ -696,7 +689,7 @@ def convert_motion_traj_to_inst_disp(px,py):
     #         py - 1d numpy array (size n) of y-coordinates of the LED on mouse head
     #    Outputs:
     #         d - 1d numpy array (size n-1) of instantaneous displacement (mm)         
-    #     
+    #         fps - frames per second
     #     Mani Subramaniyan 2023-11-10
     #     
     # The constants used here were taken from the file:
@@ -704,7 +697,7 @@ def convert_motion_traj_to_inst_disp(px,py):
     # To avoid loading everytime, I have hard-coded these numbers here. If you
     # change the video calibration info, these numbers should be updated
     # accordingly.
-        
+    fps = 29.97    
     mm_per_pix_x = 0.47047365470852015
     b = np.array([ 3.93429543e+02, -7.32063842e-02])
     # dt = np.median(np.diff(t)) # should be close to 1/29.97
@@ -723,5 +716,5 @@ def convert_motion_traj_to_inst_disp(px,py):
     dy_mm = dy*mm_per_pix_y
     d = np.sqrt((dx_mm**2)+(dy_mm**2))
     
-    return d
+    return d,fps
         
