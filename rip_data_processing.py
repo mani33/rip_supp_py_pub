@@ -137,7 +137,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             cmy = my[t_idx]
             head_disp = np.sqrt(np.diff(cmx)**2 + np.diff(cmy)**2)
             # # Add a filler value to compensate for one sample loss due to diff
-            # head_disp = np.append(head_disp, np.nan)
+            # We will replicate the last valid head disp value as the filler
+            # head_disp = np.append(head_disp, head_disp[-1])
           
             # Center ripple event times also as above
             re_rel_t = (sel_rt - ct_on)*1e-6

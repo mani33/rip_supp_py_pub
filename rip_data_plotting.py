@@ -90,6 +90,9 @@ def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
     
     # Plot average motion
     t_list = [v['rel_mt'] for _ , v in rdata.items()]
+    # Since we computed head displacement using movement info from two adjacent 
+    # video frames, we will create time bin centers
+    t_list = [x[0:-1]+np.median(np.diff(x))/2 for x in t_list]  
     v_list = [v['head_disp'] for _ , v in rdata.items()]
     plot_average_motion(t_list, v_list, args.xmin, args.xmax, ax[2])    
 
@@ -126,8 +129,12 @@ def plot_head_disp_by_trial(rdata, args, hdax):
         None
     """            
     c = 0
-    for _ , v in rdata.items(): 
-        hdax.plot(v['rel_mt'], v['head_disp'] + c, color='k', linewidth = 0.5)
+    for _ , v in rdata.items():
+        # Get bin centers for rel_mt since head_disp was computed from two
+        # adjacent frames
+        rt = v['rel_mt']
+        bin_cen = rt[0:-1]+np.median(np.diff(rt))/2        
+        hdax.plot(bin_cen, v['head_disp'] + c, color='k', linewidth = 0.5)
         c += 1
     hdax.set_xlabel('Time (s)')
     hdax.set_ylabel('Head disp (pix/frame)')
