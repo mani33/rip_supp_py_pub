@@ -83,7 +83,7 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len=True):
     # In the vt dict, 0,1,2 lists are t and, x and y respectively
     # See save_neuralynx_nvt_for_python.m for how the .mat file was created.
       
-    t = np.array(vtd[0])
+    sess_t = np.array(vtd[0])
     x = np.array(vtd[1])
     y = np.array(vtd[2])
         
@@ -99,10 +99,10 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len=True):
     for evt in event_ts:
         t1 = evt + rt_pre
         t2 = evt + rt_post
-        in_win = (t >= t1) & (t < t2)
+        in_win = (sess_t >= t1) & (sess_t < t2)
        
         # Time is in microsec
-        mt.append(np.array(t[in_win]))
+        mt.append(np.array(sess_t[in_win]))
         mx.append(np.array(x[in_win]))
         my.append(np.array(y[in_win]))
     
