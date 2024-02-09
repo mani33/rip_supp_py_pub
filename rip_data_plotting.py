@@ -21,7 +21,7 @@ import general_functions as gfun
 import rip_data_processing as rdp
 import rip_data_plotting as rplt
 import util_py as utp
-
+import djutils as dju
 
 # import scipy.stats as stats 
 
@@ -89,11 +89,11 @@ def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
     plot_ripples_hist(rdata, args, ax[1])
     
     # Plot average motion
-    t_list = [v['rel_mt'] for _ , v in rdata.items()]
+    t_list = [v['rel_mt'] for v in rdata]
     # Since we computed head displacement using movement info from two adjacent 
     # video frames, we will create time bin centers
     t_list = [x[0:-1]+np.median(np.diff(x))/2 for x in t_list]  
-    v_list = [v['head_disp'] for _ , v in rdata.items()]
+    v_list = [v['head_disp'] for v in rdata]
     plot_average_motion(t_list, v_list, args.xmin, args.xmax, ax[2])    
 
     
@@ -129,7 +129,7 @@ def plot_head_disp_by_trial(rdata, args, hdax):
         None
     """            
     c = 0
-    for _ , v in rdata.items():
+    for v in rdata:
         # Get bin centers for rel_mt since head_disp was computed from two
         # adjacent frames
         rt = v['rel_mt']
@@ -205,10 +205,10 @@ def plot_ripples_as_dots(rdata, args, rax, markersize=1,
     Outputs:
         None
     """
-    for idx in rdata:
-        rip_times = rdata[idx]['rip_evt']
-        rax.plot(rip_times, np.ones(rip_times.shape)*idx,\
-                 marker = marker, markersize=markersize, color = 'k', linestyle = 'none')
+    for idx,rd in enumerate(rdata):
+        rip_times = rd['rip_evt']
+        rax.plot(rip_times, np.ones(rip_times.shape)*idx,marker = marker,
+                 markersize=markersize, color = 'k', linestyle = 'none')
     
     # x-axis data is set tight.
     rax.margins(0.00,0.075)
@@ -285,4 +285,23 @@ def set_common_subplot_params(plt):
         }
     plt.rcParams.update(params)
  
-   
+def plot_ripples_one_session(session_ts,chan_num,pulse_per_train,std,minwidth=30):
+    args = rdp.Args()    
+    args.title = ''
+    args.n_std_mov_art = 10    
+    args.pulse_per_train = 1
+    if args.pulse_per_train > 2:
+        args.xmin = -10
+        args.xmax = 20
+    else:
+        args.xmin = -4
+        args.xmax = 6
+    key = dju.get_key_from_session_ts(session_ts)[0]
+    key['chan_num'] = chan_num   
+    rdata, args = rdp.get_processed_rip_data([key], args.pulse_per_train, [std], [minwidth], args)   
+    args.laser_color = 'b'
+    args.sess_str = [session_ts]
+    args.std = [std]
+    args.chan_num = chan_num
+    args.minwidth = [minwidth]            
+    plot_lightpulse_ripple_modulation(rdata, args)   
