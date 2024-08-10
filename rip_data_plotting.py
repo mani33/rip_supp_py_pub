@@ -22,35 +22,256 @@ import rip_data_processing as rdp
 import rip_data_plotting as rplt
 import util_py as utp
 import djutils as dju
+import copy
 
-# import scipy.stats as stats 
+linewidth = 0.5
+
 
 # For separate window, use %matplotlib qt
 # For inline plots, use %matplotlib inline
 # To save use: plt.savefig('test.pdf',dpi='figure')
      
-def plot_all_chan_mouse_rip_rate_matrix(grdata,wh):
-    """ Plot trial-averaged ripple rate of each channel of each mouse
-    Inputs: grdata = rip_data_processing.collect_mouse_group_rip_data(dd,args)
-            wh = [w,h] width and height in inches of the axis plot box (excluding ticks and labels)
-    """
-    rr,bin_cen,n = rdp.get_all_chan_mouse_rip_rate_matrix(grdata)
-    nChan = np.sum(n)   
-    rplt.set_common_subplot_params(plt)
+   
+def add_sup_title(args, fh):
+    # Super-title for the given figure handle fh
+    n_sess = len(args.sess_str)
+    t_str = []
+    for i_sess in range(n_sess):
+        t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.sess_str[i_sess]} " 
+                     f"({args.pulse_per_train} x {args.pulse_width} ms pulse) "  
+                f"{args.pulse_freq} Hz std = {args.std[i_sess]} "
+                f"minwidth = {args.minwidth[i_sess]} {args.beh_state}")
+    # Join strings
+    title_str = '\n'.join(t_str)
+    fh.suptitle(title_str)    
+
+def add_yticklab_for_last_trial(rax,n_trials):
+    # Adjust counting of trials to starts with 1 not zero which is the default
+    # Inputs:
+    #    rax - raster plot axis handle    
+    yticks = np.array(rax.get_yticks())
+    d = np.median(np.diff(yticks))
     
-    #%%
-    fig,ax = utp.make_axes(plt, wh)
-    bw = grdata[0][0]['args'].bin_width/1000
-    extents = [bin_cen[0]-bw/2,bin_cen[-1]+bw/2,nChan,0]
-    im = ax.imshow(rr,cmap='coolwarm',norm=TwoSlopeNorm(1),extent=extents,origin='upper')
-    # Mark beginning and end of channel group of each mouse
-    yticks = np.cumsum(np.hstack((0, n)))
-    for yt in yticks[1:-2]:
-        ax.plot(ax.get_xlim(),[yt,yt],linestyle='--',color='k',linewidth=0.5)
-    ax.set_yticks(yticks)
-    ax.set_xlabel('Time (s) relative to photostimulation onset')
-    ax.set_ylabel('Mouse #')
-    fig.colorbar(im,location='top',orientation='horizontal',aspect=15,shrink=0.25) 
+    yticks = np.append(yticks,n_trials)    
+    dt = np.diff(yticks[-2::])
+    # if the last but one tick label is too close to the ntrials
+    # tick label, we will delete it.
+    if np.abs(dt) < 0.25*d: 
+        yticks = np.delete(yticks,-2)
+    ytlabels = copy.copy(yticks)
+    pos_ticks = yticks >= 0    
+    rax.set_yticks(yticks[pos_ticks])    
+    rax.set_yticklabels(ytlabels[pos_ticks].astype(int))
+    
+def change_raster_yticklab_0_to_1(rax,ymax):
+    # Adjust counting of trials to starts with 1 not zero which is the default
+    # Inputs:
+    #    rax - raster plot axis handle    
+    yticks = np.array(rax.get_yticks())
+    yticks = yticks[yticks <= ymax]
+    ytlabels = copy.copy(yticks)
+    pos_ticks = yticks >= 0
+    yticks[yticks==0] = 1
+    rax.set_yticks(yticks[pos_ticks])
+    ytlabels[ytlabels==0] = 1
+    rax.set_yticklabels(ytlabels[pos_ticks].astype(int))
+    
+def plot_head_mov_by_trial(rdata, args, hdax, mov_metric='inst_speed'):
+    # Plot individual trial head displacement data    
+    """
+    Inputs: 
+        rdata, args = rip_data_processing.get_processed_rip_data(...)
+        hdax - axis handle on which to plot data
+        mov_metric - 'disp' or 'inst_speed'; We will plot instantaneous speed (mm/s) 
+                    by default. If 'disp', instantaneous displacement in 
+                    pixels will be plotted.
+    Outputs:
+        None
+    """            
+    c = 1
+    sf = 1/20 # scaling factor to reduce clutter in the plot
+    for v in rdata:
+        # Get bin centers for rel_mt since head_disp was computed from two
+        # adjacent frames
+        rt = v['rel_mt']
+        bin_cen = rt[0:-1]+np.median(np.diff(rt))/2
+        match mov_metric:
+            case 'inst_speed':
+                d_mm,fps = rdp.convert_motion_traj_to_inst_disp(v['mx'],v['my'])
+                mov_data = d_mm*fps # mm per sec
+                ylabel = 'Instantaneous head speed (mm/s)'
+            case 'disp':
+                mov_data = v['disp']
+                ylabel = 'Instantaneous head displacement (pix)'
+            case _:
+                raise ValueError('Undefined mov metric')                    
+        hdax.plot(bin_cen, (mov_data*sf)+c, color='k', linewidth = 0.5)
+        c += 1
+    hdax.set_xlabel('Time (s) relative to photostimulation onset')
+    hdax.set_ylabel(ylabel)
+    hdax.set_xlim([args.xmin, args.xmax])    
+    hdax.set_ylim([-1,c+2])
+    hdax.margins(0.0,0.05)
+    change_raster_yticklab_0_to_1(hdax,c+2)
+    # Add a ytick label for the last trial
+    add_yticklab_for_last_trial(hdax,c-1)
+    
+def plot_avg_or_med_motion(t_list,v_list,xmin,xmax,dax,ylim=[],plot_type='median'):
+    """
+    Averaged head displacement plot
+    Use interpolation and sample head displacement at the same time points for 
+    all photostimulation trials (interpolation is needed because video camera sampled
+    frames at slightly different times)  
+    
+    Inputs:
+        t_list - list of numpy array of times (sec) relative to photostim. 
+                 len(t_list) = num trials
+        v_list - list of numpy array of head displacement. Same len as t_list
+        xmin, xmax - int or float, time window boundary (sec) for all trials. 
+                     e.g. xmin = -10, xmax = 15
+        dax - axes handle in which to plot the data
+        plot_type - string, 'median' or 'mean'
+        
+    Outputs:
+        None
+    """
+    t_vec,mi_list = gfun.interp_based_event_trig_data_average(t_list,v_list)
+    # First change into 2D array where rows are trials
+    mi_array = np.stack(mi_list,axis=0)    
+    
+    match plot_type:       
+        case 'mean':            
+            mi_cen = np.mean(mi_array,axis=0)
+            d_high = mi_cen + np.std(mi_array,axis=0)
+            d_low = mi_cen - np.std(mi_array,axis=0)
+            ylabel = 'Mean instantaneous motion'
+        case 'median':
+            mi_cen = np.median(mi_array,axis=0)
+            d_high = np.quantile(mi_array,0.75,axis=0)
+            d_low = np.quantile(mi_array,0.25,axis=0)
+            ylabel = 'Median instantaneous motion'
+            
+    error_col = [0.75,0.75,0.75]
+    edge_col = [0.75,0.75,0.75]
+    dax.fill_between(t_vec,d_low,d_high,facecolor=error_col,edgecolor=edge_col)
+    dax.plot(t_vec[::1],mi_cen[::1],color='k',marker='.',markersize=0.5,linewidth=linewidth)
+    # dax.plot(t_vec[::5],mi_cen[::5],color='k',marker='.',markersize=1,linewidth=linewidth)
+    ph.boxoff(dax)
+    
+    dax.set_xlim([xmin, xmax])
+    if len(ylim)==2:
+        dax.set_ylim(ylim)
+    dax.set_xlabel('Time (s) relative to photostimulation onset')
+    dax.set_ylabel(ylabel)    
+    
+def plot_ripples_hist(rdata, args, hax):
+    """
+    Histogram of ripples
+    Inputs:
+        rdata, args = rip_data_processing.get_processed_rip_data(...)
+        hax - axes on which to plot data
+    Outputs:
+        None
+    """
+    # Pool ripple event times
+    rip_rate, bins, _ = rdp.get_ripple_rate(rdata, args.bin_width, args.xmin, args.xmax)
+    hax.hist(bins[:-1], bins,  weights = rip_rate, color = 'k', rwidth = 1)
+    # x-axis data is set tight.
+    # hax.margins(0.0,0.075)
+    hax.set_xlim([args.xmin, args.xmax])
+    hax.set_xlabel('Time (s) relative to photostimulation onset')
+    hax.set_ylabel('Ripples/s')
+    
+def plot_ripples_as_dots(rdata, args, rax, markersize=1,
+                         xlabel='Time (s) relative to photostimulation onset',
+                         ylabel='Photostimulation trial',
+                         marker='.'):
+    """
+    Raster plot of ripples
+    Inputs:
+        rdata, args = rip_data_processing.get_processed_rip_data(...)
+        rax - axes on which to plot data
+    Outputs:
+        None
+    """
+    for idx,rd in enumerate(rdata):
+        rip_times = rd['rip_evt']
+        rax.plot(rip_times, (np.ones(rip_times.shape)*idx)+1,marker = marker,
+                 markersize=markersize, color = 'k', linestyle = 'none')
+    
+    # x-axis data is set tight.
+    rax.margins(0.00,0.075)
+    rax.set_xlim([args.xmin, args.xmax])
+    # Leave space for light pulse on the top but keep bottom tight
+    ylim_max = rax.get_ylim()[1]
+    rax.set_ylim(-2, ylim_max) 
+    rax.set_xlabel(xlabel)
+    rax.set_ylabel(ylabel)
+    change_raster_yticklab_0_to_1(rax,ylim_max)
+    # Add a ytick label for the last trial
+    add_yticklab_for_last_trial(rax,idx+1)
+    
+def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax, **kwargs):
+    """
+    plot the light pulses as boxes on the given axes (rax)
+    Inputs:
+        pulse_width - int or float, width of light pulse in msec
+        pulse_per_train - int or float, num of light pulses per train
+        pulse_freq - int or float, Hz
+        laser_color - char, 'g' for green, 'b' for blue
+        rax - axes for plotting data
+    Outputs:
+        None
+    """
+    # Where to plot - top or bottom
+    if 'loc' not in kwargs.keys():
+        loc = 'top'
+    else:
+        loc = kwargs['loc']
+            
+    if loc=='top':
+        y = rax.get_ylim()[1]*0.95
+    elif loc=='bottom':
+        y = rax.get_ylim()[0]*(-0.01)
+    else:
+        raise ValueError('loc param should be either "top" or "bottom"')
+        
+    pw = pulse_width * 1e-3 # convert from ms to sec
+    if pw < 0.01:
+        pw = 0.01
+        warnings.warn('Pulse width was too short for plotting so setting it to 10ms')
+    
+    if pulse_per_train==1:
+        x = 0
+        rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))
+    else:
+        ipi = 1/pulse_freq # Interpulse interval
+        for i in range(pulse_per_train[0]):
+            x = i * ipi           
+            rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))           
+  
+
+ 
+def plot_ripples_one_session(session_ts,chan_num,pulse_per_train,std,minwidth=30):
+    args = rdp.Args()    
+    args.title = ''
+    args.n_std_mov_art = 10    
+    args.pulse_per_train = 1
+    if args.pulse_per_train > 2:
+        args.xmin = -10
+        args.xmax = 20
+    else:
+        args.xmin = -4
+        args.xmax = 6
+    key = dju.get_key_from_session_ts(session_ts)[0]
+    key['chan_num'] = chan_num   
+    rdata, args = rdp.get_processed_rip_data([key], args.pulse_per_train, [std], [minwidth], args)   
+    args.laser_color = 'b'
+    args.sess_str = [session_ts]
+    args.std = [std]
+    args.chan_num = chan_num
+    args.minwidth = [minwidth]            
+    plot_lightpulse_ripple_modulation(rdata, args)
     
 def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
     """ Plot ripple data when a pulse or train of pulses of light was given
@@ -98,165 +319,36 @@ def plot_lightpulse_ripple_modulation (rdata, args, **kwargs):
 
     
     # Plot head dispacement trial by trial
-    plot_head_disp_by_trial(rdata, args, ax[3])
+    plot_head_mov_by_trial(rdata, args, ax[3])
     plot_light_pulses(args.pulse_width, args.pulse_per_train, args.pulse_freq, args.laser_color, ax[3])
     
     #Title
     add_sup_title(args, fig)
     
     plt.show()
-    
-def add_sup_title(args, fh):
-    # Super-title for the given figure handle fh
-    n_sess = len(args.sess_str)
-    t_str = []
-    for i_sess in range(n_sess):
-        t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.sess_str[i_sess]} " 
-                     f"({args.pulse_per_train} x {args.pulse_width} ms pulse) "  
-                f"{args.pulse_freq} Hz std = {args.std[i_sess]} "
-                f"minwidth = {args.minwidth[i_sess]} {args.beh_state}")
-    # Join strings
-    title_str = '\n'.join(t_str)
-    fh.suptitle(title_str)    
-    
-def plot_head_disp_by_trial(rdata, args, hdax):
-    # Plot individual trial head displacement data    
-    """
-    Inputs: 
-        rdata, args = rip_data_processing.get_processed_rip_data(...)
-        hdax - axis handle on which to plot data
-    Outputs:
-        None
-    """            
-    c = 0
-    for v in rdata:
-        # Get bin centers for rel_mt since head_disp was computed from two
-        # adjacent frames
-        rt = v['rel_mt']
-        bin_cen = rt[0:-1]+np.median(np.diff(rt))/2        
-        hdax.plot(bin_cen, v['head_disp'] + c, color='k', linewidth = 0.5)
-        c += 1
-    hdax.set_xlabel('Time (s)')
-    hdax.set_ylabel('Head disp (pix/frame)')
-    hdax.set_xlim([args.xmin, args.xmax])
-    hdax.margins(0.0,0.05)
-    
-def plot_average_motion(t_list, v_list, xmin, xmax, dax, **kwargs):
-    """
-    Averaged head displacement plot
-    Use interpolation and sample head displacement at the same time points for 
-    all photostimulation trials (interpolation is needed because video camera sampled
-    frames at slightly different times)  
-    
-    Inputs:
-        t_list - list of numpy array of times (sec) relative to photostim. 
-                 len(t_list) = num trials
-        v_list - list of numpy array of head displacement. Same len as t_list
-        xmin, xmax - int or float, time window boundary (sec) for all trials. 
-                     e.g. xmin = -10, xmax = 15
-        dax - axes handle in which to plot the data
-    Outputs:
-        None
-    """
-    t_vec, mi_list = gfun.interp_based_event_trig_data_average(t_list, v_list)
-    
-    # Average: first change into 2D array where rows are trials
-    mi_array = np.stack(mi_list, axis=0)
-    mi_avg = np.mean(mi_array, axis=0)
-    
-    if 'median' in kwargs.keys() and kwargs['median']:
-        mi_mdn = np.median(mi_array, axis=0)
-        dax.plot(t_vec, mi_mdn, color='b', linewidth = 0.5, label='median')
-    
-    dax.plot(t_vec, mi_avg, color='k', linewidth = 0.5, label='mean')
-    dax.set_xlim([xmin, xmax])
-    dax.set_ylim([0, 4])
-    dax.set_xlabel('Time (s)')
-    dax.set_ylabel('Head disp (pix/frame)')
-    dax.legend(loc='upper right')
-    
-def plot_ripples_hist(rdata, args, hax):
-    """
-    Histogram of ripples
-    Inputs:
-        rdata, args = rip_data_processing.get_processed_rip_data(...)
-        hax - axes on which to plot data
-    Outputs:
-        None
-    """
-    # Pool ripple event times
-    rip_rate, bins, _ = rdp.get_ripple_rate(rdata, args.bin_width, args.xmin, args.xmax)
-    hax.hist(bins[:-1], bins,  weights = rip_rate, color = 'k', rwidth = 1)
-    # x-axis data is set tight.
-    # hax.margins(0.0,0.075)
-    hax.set_xlim([args.xmin, args.xmax])
-    hax.set_xlabel('Time (s) relative to photostimulation onset')
-    hax.set_ylabel('Ripples/s')
-    
-def plot_ripples_as_dots(rdata, args, rax, markersize=1,
-                         xlabel='Time (s) relative to photostimulation onset',
-                         ylabel='Photostimulation trial',
-                         marker='.'):
-    """
-    Raster plot of ripples
-    Inputs:
-        rdata, args = rip_data_processing.get_processed_rip_data(...)
-        rax - axes on which to plot data
-    Outputs:
-        None
-    """
-    for idx,rd in enumerate(rdata):
-        rip_times = rd['rip_evt']
-        rax.plot(rip_times, np.ones(rip_times.shape)*idx,marker = marker,
-                 markersize=markersize, color = 'k', linestyle = 'none')
-    
-    # x-axis data is set tight.
-    rax.margins(0.00,0.075)
-    rax.set_xlim([args.xmin, args.xmax])
-    # Leave space for light pulse on the top but keep bottom tight
-    rax.set_ylim(-2, rax.get_ylim()[1]) 
-    rax.set_xlabel(xlabel)
-    rax.set_ylabel(ylabel)
 
-def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax, **kwargs):
+def plot_all_chan_mouse_rip_rate_matrix(grdata,wh):
+    """ Plot trial-averaged ripple rate of each channel of each mouse
+    Inputs: grdata = rip_data_processing.collect_mouse_group_rip_data(dd,args)
+            wh = [w,h] width and height in inches of the axis plot box (excluding ticks and labels)
     """
-    plot the light pulses as boxes on the given axes (rax)
-    Inputs:
-        pulse_width - int or float, width of light pulse in msec
-        pulse_per_train - int or float, num of light pulses per train
-        pulse_freq - int or float, Hz
-        laser_color - char, 'g' for green, 'b' for blue
-        rax - axes for plotting data
-    Outputs:
-        None
-    """
-    # Where to plot - top or bottom
-    if 'loc' not in kwargs.keys():
-        loc = 'top'
-    else:
-        loc = kwargs['loc']
-            
-    if loc=='top':
-        y = rax.get_ylim()[1]*0.95
-    elif loc=='bottom':
-        y = rax.get_ylim()[0]*(-0.01)
-    else:
-        raise ValueError('loc param should be either "top" or "bottom"')
-        
-    pw = pulse_width * 1e-3 # convert from ms to sec
-    if pw < 0.01:
-        pw = 0.01
-        warnings.warn('Pulse width was too short for plotting so setting it to 10ms')
+    rr,bin_cen,n = rdp.get_all_chan_mouse_rip_rate_matrix(grdata)
+    nChan = np.sum(n)   
+    rplt.set_common_subplot_params(plt)
+
+    fig,ax = utp.make_axes(plt, wh)
+    bw = grdata[0][0]['args'].bin_width/1000
+    extents = [bin_cen[0]-bw/2,bin_cen[-1]+bw/2,nChan,0]
+    im = ax.imshow(rr,cmap='coolwarm',norm=TwoSlopeNorm(1),extent=extents,origin='upper')
+    # Mark beginning and end of channel group of each mouse
+    yticks = np.cumsum(np.hstack((0, n)))
+    for yt in yticks[1:-2]:
+        ax.plot(ax.get_xlim(),[yt,yt],linestyle='--',color='k',linewidth=0.5)
+    ax.set_yticks(yticks)
+    ax.set_xlabel('Time (s) relative to photostimulation onset')
+    ax.set_ylabel('Mouse #')
+    fig.colorbar(im,location='top',orientation='horizontal',aspect=15,shrink=0.25) 
     
-    if pulse_per_train==1:
-        x = 0
-        rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))
-    else:
-        ipi = 1/pulse_freq # Interpulse interval
-        for i in range(pulse_per_train):
-            x = i * ipi           
-            rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))           
-  
 def set_common_subplot_params(plt):
     """
     # Set parameters that will be common for all subplots
@@ -284,24 +376,3 @@ def set_common_subplot_params(plt):
         'text.usetex': False
         }
     plt.rcParams.update(params)
- 
-def plot_ripples_one_session(session_ts,chan_num,pulse_per_train,std,minwidth=30):
-    args = rdp.Args()    
-    args.title = ''
-    args.n_std_mov_art = 10    
-    args.pulse_per_train = 1
-    if args.pulse_per_train > 2:
-        args.xmin = -10
-        args.xmax = 20
-    else:
-        args.xmin = -4
-        args.xmax = 6
-    key = dju.get_key_from_session_ts(session_ts)[0]
-    key['chan_num'] = chan_num   
-    rdata, args = rdp.get_processed_rip_data([key], args.pulse_per_train, [std], [minwidth], args)   
-    args.laser_color = 'b'
-    args.sess_str = [session_ts]
-    args.std = [std]
-    args.chan_num = chan_num
-    args.minwidth = [minwidth]            
-    plot_lightpulse_ripple_modulation(rdata, args)   

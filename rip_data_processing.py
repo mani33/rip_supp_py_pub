@@ -111,6 +111,10 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     
     return bin_cen, mean_rr, std_rr, all_mouse_rr
 
+def calc_displacement(x,y):
+    # Calculate instantaneous displacement based on x and y coordinates    
+    return np.sqrt(np.diff(x)**2 + np.diff(y)**2)
+    
 def center_and_scale_time(mt, evt):
     """
     Center the time vector to event time and convert units from microsec to sec
@@ -130,7 +134,7 @@ def collect_mouse_group_rip_data(data_sessions,args):
     Inputs:
         data_sessions : Pandas data frame containing the following columns:
                         animal_id, session_ts, pulse_per_train, pulse_width, chan, std, minwidth, 
-                        laser_color, laser_knob, motion_quantile       
+                        laser_color, laser_knob       
         args -  Args object with updated params-values
        
     Outputs:
@@ -146,10 +150,12 @@ def collect_mouse_group_rip_data(data_sessions,args):
     for iMouse,m_id in enumerate(uids):
         # Get data slice corresponding to the current mouse
         dd = data_sessions[ids==m_id]        
-        sess_keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]
+        sess_keys = [dju.get_key_from_session_ts(sess_ts)[0] for sess_ts in list(dd.session_ts)]        
         # It is assumed that all repeated sessions of any mouse have the same 
         # set of experimental parameters excluding recording channels. 
-        # So parameters come from the first session.
+        # So parameters come from the first session. But in some rare circumstances
+        # like the wild type mice, we need to pool two different conditions such
+        # as 1 and 2 pulses per train and 3 and 5 ms pulse widths.
         dd_one = dd.iloc[0,:]        
         # When the same experimental condition (say pulse width, std, minwidth,
         # laser color etc) was repeated several days apart, often recording 
@@ -170,9 +176,10 @@ def collect_mouse_group_rip_data(data_sessions,args):
                     sel_keys.append(sess_key)
                     std.append(dd.iloc[iKey,:]['std'])
                     minwidth.append(dd.iloc[iKey,:]['minwidth'])            
-            rdata, args = get_processed_rip_data(sel_keys, dd_one['pulse_per_train'].astype(int),
+            rdata, args = get_processed_rip_data(sel_keys,list(dd['pulse_per_train']),
                                 std, minwidth,args)
-            ch_dic = {'animal_id': sess_keys[0]['animal_id'], 'chan_num': ch,'rdata': rdata, 'args': args}
+            ch_dic = {'animal_id': sess_keys[0]['animal_id'], 
+                      'chan_num': ch,'rdata': rdata, 'args': args}
             group_data[iMouse].append(ch_dic)
         print(f'Done with mouse {iMouse}')     
     return group_data
@@ -223,7 +230,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth):
             for iChan in range(nMouseChan):
                 # Analyze the trials' session start time to check if any belong
                 # to the current session
-                trial_sess_starts = np.array([x['session_start_time'] for _,x in md[iChan]['rdata'].items()])
+                trial_sess_starts = np.array([x['session_start_time'] for x in md[iChan]['rdata']])
                 sel_ind = np.nonzero(trial_sess_starts==sess_start)[0]
                 # Pick trials that belonged to the current session
                 if sel_ind.size !=0:
@@ -312,32 +319,40 @@ def correct_abnorm_high_mov_artifacts(rdata,art_peak_hw_ratio_th=10):
     Output:
         tot_art_dur - 1d numpy array (nTrials,) of total duration of artifacts
                         within each trial
-        art_idx - list (len = nTrials) of 1d numpy array of indices of artifact 
-                locations in the displacement values within each trial 
-        No output required as the correction will happen 'in place' so that
-        the rdata dict will automatically reflect the corrections.
+        
+        rdata - same as the input but with artifact-corrected motion data and 
+                with a new dict item art_idx, which is a list (len = nTrials) 
+                of 1d numpy array of indices of artifact locations in the 
+                displacement values within each trial 
         
     """
     debug=False
+    # The idea: we will detect unusually big artifacts in the head displacement
+    # but won't correct it first. Instead, we will go and fix the artifacts in 
+    # the x and y coordinates and then recompute head displacement based on the
+    # new values.
     
-    yy = [y['head_disp'] for y in rdata]
-    yy = np.concatenate(yy)
-    s = np.nanstd(yy)
-    
-    
+    dd = [d['head_disp'] for d in rdata]
+    dd = np.concatenate(dd)
+    s = np.nanstd(dd)
+        
     trials_with_art = []
     fps = 29.97
     tot_art_dur = []
     
     for iTrial,rd in enumerate(rdata):
-        y = rd['head_disp']
+        d = rd['head_disp']
+        mx = rd['mx']
+        my = rd['my']
+        
         # head_disp was calculated with two adjacent points leaving the length 
         # of y one less than that of t. So we will exclude the last time point.
         # We can do this because the exact value of t is unimportant        
-        t = rd['rel_mt'][:-1] 
+        t = rd['rel_mt'][:-1]
+        tf = rd['rel_mt'] # full time for x and y coordinates
         # Replace outliers with interpolated values        
        
-        pdata = sig.find_peaks(y,height=s,width=0.5,rel_height=0.9)
+        pdata = sig.find_peaks(d,height=s,width=0.5,rel_height=0.9)
         hw_ratio = pdata[1]['peak_heights']/pdata[1]['widths'] 
         
         art_dur = 0        
@@ -350,7 +365,7 @@ def correct_abnorm_high_mov_artifacts(rdata,art_peak_hw_ratio_th=10):
                     print(f'max hw ratio: {np.round(np.max(hw_ratio),2)}')
                     plt.clf()
                     plt.subplot(1,2,1)
-                    plt.plot(t,y)
+                    plt.plot(t,d)
                     plt.subplot(1,2,2)
                     plt.stem(hw_ratio)
                     plt.tight_layout()
@@ -369,22 +384,34 @@ def correct_abnorm_high_mov_artifacts(rdata,art_peak_hw_ratio_th=10):
         art = np.zeros(t.size,dtype=bool)
         if np.any(outliers):
             trials_with_art.append(iTrial)
-            art = outliers | np.isnan(y)
-            sel = ~art
-            gt = t[sel]
-            gy = y[sel]
-            gout = np.interp(t[outliers],gt,gy)
-            # The following line is equivalent to rdata[iTrial]['head_disp'][outliers] = gout
-            # because in the line y = rd['head_disp], y copies the reference to
-            # data. So when y gets updated, the original rdata gets updated. This
-            # is also the reason why we don't need to return rdata.
-            y[outliers] = gout  
+            art = outliers | np.isnan(d)
+            good_part_ind = np.nonzero(~art)[0]
+            # Shift indices by 1 to account for differencing in computing 
+            # displacement
+            gmx = mx[good_part_ind+1]
+            gmy = my[good_part_ind+1]
+            gtf = tf[good_part_ind+1]            
+            outlier_ind = np.nonzero(outliers)[0]+1
+            # Fix artifact segments by interpolation
+            gx_out = np.interp(tf[outlier_ind],gtf,gmx)
+            gy_out = np.interp(tf[outlier_ind],gtf,gmy)            
+            # The following line is equivalent to rdata[iTrial]['mx'][outliers] = gx_out
+            # because in the line mx = rd['mx'], mx copies the reference to
+            # data. So when mx gets updated, the original rdata gets updated. 
+            
+            mx[outlier_ind] = gx_out
+            my[outlier_ind] = gy_out
+            
+            # Recalculate displacement based on artifact-corrected x and y 
+            # coorindates
+            d_fixed = calc_displacement(mx, my)
+            rd['head_disp'] = d_fixed
         rdata[iTrial]['art_idx'] = art
         
     if len(trials_with_art)>0:
-        print('Trials for which artifacts corrected: ',trials_with_art)
+        print('Trials (Python indices) for which artifacts corrected: ',trials_with_art)
    
-    return np.array(tot_art_dur)
+    return np.array(tot_art_dur),rdata
 
 
 def filter_trials_by_beh_state(tr_on, tr_off, beh_state, key):
@@ -650,7 +677,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             keys - list of dict. Must be a list even if just one dict. All keys
                    must be from the same mouse and same channel and with the 
                    same light pulse stimulation protocol
-            pulse_per_train - int; number of pulses were given in each train
+            pulse_per_train - list; number of pulses given in each train; list
+                    size must match that of keys
             std - list of std values for restricting ripples table
             minwidth - list of minwidth params for restricting ripples table
             args -  Args object with updated params-values          
@@ -685,18 +713,19 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     all_pulse_width = set()
     all_pulse_freq = set()
     for ikey, key in enumerate(keys):
+        ppt = pulse_per_train[ikey]
         # Get light pulse train info
-        pon_times, poff_times, pulse_width, pulse_freq = get_light_pulse_train_info(key, pulse_per_train)
+        pon_times, poff_times, pulse_width, pulse_freq = get_light_pulse_train_info(key, ppt)
         all_pulse_width.add(pulse_width)
         all_pulse_freq.add(pulse_freq)
         # For plotting purpose, extract one pulse train on and off times in sec
         # We assume that all keys had the same stimulus train parameters, so we pick one key
         if ikey==0:
-            one_train_on = (pon_times[0:pulse_per_train] - pon_times[0]) * 1e-6
-            one_train_off = (poff_times[0:pulse_per_train] - poff_times[0]) * 1e-6
+            one_train_on = (pon_times[0:ppt] - pon_times[0]) * 1e-6
+            one_train_off = (poff_times[0:ppt] - poff_times[0]) * 1e-6
         # Pick the first pulse times in the pulse train for time referencing
-        tr_on = pon_times[::pulse_per_train] # shape: (rows,), int64
-        tr_off = poff_times[::pulse_per_train] # shape: (rows,), int64
+        tr_on = pon_times[::ppt] # shape: (rows,), int64
+        tr_off = poff_times[::ppt] # shape: (rows,), int64
         
         # Get motion info from tracker data. tr_on is returned because it may be trimmed
         # inside the get_perievent_motion function for shorter trial length
@@ -724,12 +753,12 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
         
         # Get ripple events
         fstr = f'std = {std[ikey]} and minwidth = {minwidth[ikey]}'
-        print(fstr)
-        # rpt = np.array((ripples.RipEventsBs & key & fstr).fetch('peak_t'))
+        print(fstr)        
         rpt = np.array((ripples.RipEventsBs & key & 
                         (ripples.DetParamsBs & fstr)).fetch('peak_t'))
-        # Check if the RipEvents table was populated
-        assert rpt.size > 0, 'No ripples! Check if the RipEvents table is populated'
+        # Check if the RipEvents table was populated for sessions for nrem behavioral state
+        if args.beh_state=='nrem':
+            assert rpt.size > 0, 'No ripples! Check if the RipEvents table is populated'
         
         # Go through each pulse train and collect ripples near by        
         for t_idx, ct_on in enumerate(tr_on):
@@ -738,7 +767,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
             sel_rt = rpt[(rpt >= twin[0]) & (rpt < twin[1])]
             cmx = mx[t_idx]
             cmy = my[t_idx]
-            head_disp = np.sqrt(np.diff(cmx)**2 + np.diff(cmy)**2)
+            head_disp = calc_displacement(cmx,cmy)
             # # Add a filler value to compensate for one sample loss due to diff
             # We will replicate the last valid head disp value as the filler
             # head_disp = np.append(head_disp, head_disp[-1])
@@ -751,8 +780,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
                                  
     # Remove high amplitude head disp artifacts
     if args.correct_high_amp_mov_art:
-        # Correct artifactual segments of
-        art_dur = correct_abnorm_high_mov_artifacts(rdata,
+        # Correct artifactual segments 
+        art_dur,rdata = correct_abnorm_high_mov_artifacts(rdata,
                                 art_peak_hw_ratio_th=args.art_peak_hw_ratio_th)
         rdata = [rdata[i] for i in np.nonzero(art_dur < args.max_art_duration)[0]]
             
@@ -808,17 +837,18 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
     """
     Pool head displacement across mice. We will not normalize within each mouse
     Inputs:
-        group_data - list (mice) of list(channels) of dict (ripple data), this is an output from
-                     collect_mouse_group_rip_data(...) function call.
+        group_data - list (mice) of list(channels) of dict (ripple data), this 
+                    is an output from collect_mouse_group_rip_data(...) function call.
         metric - string; must be either 'disp' (head displacement) or 'inst_speed'
         within_mouse_operator - str, should be 'mean' or 'median' - tells you if mean
                               or median is computed across trials within a mouse 
     Outputs: 
-        t_vec - 1D numpy array of time(sec) relative to stimulus onset
-        mean_rr - 1D numpy array, across-mice mean head movement metric; unit is mm for disp, mm/s for inst_speed 
-        std_rr - 1D numpy array, across-mice standard deviation of each time bin
-        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric (mean or median)
-    MS 2022-03-14
+        t_bin_cen_vec - 1D numpy array of bin center times(s) relative to 
+                        stimulus onset
+        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric 
+                (mean or median)
+    
+    MS 2022-03-14/2024-08-08
         
     """
     all_rr = []
@@ -878,12 +908,9 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
             
         all_rr.append(mi_cen)
         
-    # Average across mice
     all_rr = np.array(all_rr)
-    mean_rr = np.mean(all_rr, axis=0)
-    std_rr = np.std(all_rr, axis=0)
-    
-    return t_bin_cen, mean_rr, std_rr, all_rr
+   
+    return t_bin_cen, all_rr
                 
  
 
