@@ -90,13 +90,13 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
                 # Normalize the ripple rate for each channel by the mean ripple
                 # rate during baseline period (i.e., period until stim onset time)
                 # This method will give equal weight to all channels
-                norm_rd = rd/np.mean(rd[bin_cen < 0])
+                norm_rd = rd/np.nanmean(rd[bin_cen < 0])
                 norm_rip_rate.append(norm_rd)
             # Apply selection on the ripple rate
             norm_rip_rate = np.array(norm_rip_rate)
             match elec_sel_meth:
                 case 'avg':
-                    norm_mouse_rr = np.mean(norm_rip_rate, axis=0)
+                    norm_mouse_rr = np.nanmean(norm_rip_rate, axis=0)
                 case _:
                     raise ValueError("The provided method %s is not implemented\n" % elec_sel_meth)                
         all_rr_norm.append(norm_mouse_rr)
@@ -106,8 +106,8 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     
     # Average across mice
     all_mouse_rr = np.array(all_rr_norm)
-    mean_rr = np.mean(all_rr_norm, axis=0)
-    std_rr = np.std(all_rr_norm, axis=0)
+    mean_rr = np.nanmean(all_rr_norm, axis=0)
+    std_rr = np.nanstd(all_rr_norm, axis=0)
     
     return bin_cen, mean_rr, std_rr, all_mouse_rr
 
@@ -394,11 +394,11 @@ def correct_abnorm_high_mov_artifacts(rdata,art_peak_hw_ratio_th=10):
             outlier_ind = np.nonzero(outliers)[0]+1
             # Fix artifact segments by interpolation
             gx_out = np.interp(tf[outlier_ind],gtf,gmx)
-            gy_out = np.interp(tf[outlier_ind],gtf,gmy)            
+            gy_out = np.interp(tf[outlier_ind],gtf,gmy)
+            
             # The following line is equivalent to rdata[iTrial]['mx'][outliers] = gx_out
             # because in the line mx = rd['mx'], mx copies the reference to
-            # data. So when mx gets updated, the original rdata gets updated. 
-            
+            # data. So when mx gets updated, the original rdata gets updated.            
             mx[outlier_ind] = gx_out
             my[outlier_ind] = gy_out
             
@@ -774,6 +774,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
           
             # Center ripple event times also as above
             re_rel_t = (sel_rt - ct_on)*1e-6
+            # We will put all trials of sessions (keys) together. That is why
+            # append operation for rdata is inside this loop!
             rdata.append({'rel_mt': rel_mt[t_idx], 'mx': mx[t_idx], 'my': my[t_idx],\
                         'head_disp': head_disp, 'rip_evt': re_rel_t,
                         'session_start_time':key['session_start_time']})            
@@ -784,7 +786,12 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
         art_dur,rdata = correct_abnorm_high_mov_artifacts(rdata,
                                 art_peak_hw_ratio_th=args.art_peak_hw_ratio_th)
         rdata = [rdata[i] for i in np.nonzero(art_dur < args.max_art_duration)[0]]
-            
+    
+    # Compute instantaneous speed, after correcting for artifacts
+    for rd in rdata:
+        inst_speed,fps = convert_motion_traj_to_inst_disp(rd['mx'], rd['my'])
+        rd['inst_speed'] = inst_speed        
+        
     if not len(all_pulse_freq)==len(all_pulse_width)==1:
         print('**************************************************************')
         print('pulse frequencies: ',all_pulse_freq)
@@ -799,6 +806,7 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     args.pulse_freq = pulse_freq
     args.pulse_per_train = pulse_per_train
     args.mouse_id = key['animal_id']
+    args.fps = fps # frames per sec (video frame rate)
     args.chan_name = (cont.Chan & key & f'chan_num = {key["chan_num"]}').fetch('chan_name')[0]
     
     return rdata, args
@@ -870,24 +878,16 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
         # trials, and the x and y coordinates corresponding to the common time points.
         t_vec, mxi_list = gfun.interp_based_event_trig_data_average(t_list, vx_list)
         _, myi_list = gfun.interp_based_event_trig_data_average(t_list, vy_list)
-        
+              
         # Compute head displacement  or instantaneuous speed 
         # using movement info from two adjacent video frames        
         # Create time bin centers
-        ifi = np.median(np.diff(t_vec)) # inter-frame-interval
+        ifi = np.nanmedian(np.diff(t_vec)) # inter-frame-interval
         t_bin_cen = t_vec[0:-1]+ifi/2
         
         # Compute head displacement in mm
         d_array = [convert_motion_traj_to_inst_disp(px,py)[0] \
-             for px,py in zip(mxi_list,myi_list)]
-        # Interpolate accepted-for-correction artifactual time periods
-        for outliers,dis in zip(art_idx,d_array):
-            good_idx = ~outliers
-            gt = t_bin_cen[good_idx]
-            gy = dis[good_idx]
-            outliers_corr = np.interp(t_bin_cen[outliers],gt,gy)
-            # In-place correction of d_array's each element
-            dis[outliers] = outliers_corr  
+             for px,py in zip(mxi_list,myi_list)]       
         match metric:
             case 'inst_speed':
                 mi_list = [di/ifi for di in d_array] # mm/sec
@@ -900,9 +900,9 @@ def pool_head_mov_across_mice(group_data,metric,within_mouse_operator):
         # first change into 2D array where rows are trials
         mi_array = np.stack(mi_list, axis=0)
         if within_mouse_operator == 'mean':
-            mi_cen = np.mean(mi_array, axis=0)
+            mi_cen = np.nanmean(mi_array, axis=0)
         elif within_mouse_operator == 'median':
-            mi_cen = np.median(mi_array, axis=0)
+            mi_cen = np.nanmedian(mi_array, axis=0)
         else:
             raise ValueError('within_mouse_operator should be "mean" or "median"')
             

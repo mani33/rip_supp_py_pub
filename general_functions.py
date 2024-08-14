@@ -204,7 +204,7 @@ def interp_based_event_trig_data_average(t_list, v_list):
     right = np.arange(ifi, tmax, ifi)
     t_vec = np.concatenate([left, right]) 
     
-    vi_list = [np.interp(t_vec, ti, vi) for ti, vi in zip(t_list, v_list)]
+    vi_list = [np.interp(t_vec, ti, vi,left=np.nan,right=np.nan) for ti, vi in zip(t_list, v_list)]
         
     return t_vec, vi_list
     
