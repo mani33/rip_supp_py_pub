@@ -116,7 +116,7 @@ def plot_head_mov_by_trial(rdata, args, hdax, mov_metric='inst_speed'):
     # Add a ytick label for the last trial
     add_yticklab_for_last_trial(hdax,c-1)
     
-def plot_avg_or_med_motion(t_list,v_list,xmin,xmax,dax,ylim=[],plot_type='median'):
+def plot_mean_med_motion(t_list,v_list,xmin,xmax,dax,ylim=[]):
     """
     Averaged head displacement plot
     Use interpolation and sample head displacement at the same time points for 
@@ -130,39 +130,37 @@ def plot_avg_or_med_motion(t_list,v_list,xmin,xmax,dax,ylim=[],plot_type='median
         xmin, xmax - int or float, time window boundary (sec) for all trials. 
                      e.g. xmin = -10, xmax = 15
         dax - axes handle in which to plot the data
-        plot_type - string, 'median' or 'mean'
-        
+                
     Outputs:
         None
     """
     t_vec,mi_list = gfun.interp_based_event_trig_data_average(t_list,v_list)
     # First change into 2D array where rows are trials
-    mi_array = np.stack(mi_list,axis=0)    
-    
-    match plot_type:       
-        case 'mean':            
-            mi_cen = np.mean(mi_array,axis=0)
-            d_high = mi_cen + np.std(mi_array,axis=0)
-            d_low = mi_cen - np.std(mi_array,axis=0)
-            ylabel = 'Mean instantaneous motion'
-        case 'median':
-            mi_cen = np.median(mi_array,axis=0)
-            d_high = np.quantile(mi_array,0.75,axis=0)
-            d_low = np.quantile(mi_array,0.25,axis=0)
-            ylabel = 'Median instantaneous motion'
+    mi_array = np.stack(mi_list,axis=0) 
+    mov_mean = np.nanmean(mi_array,axis=0)
+    # d_high = mi_cen + np.std(mi_array,axis=0)
+    # d_low = mi_cen - np.std(mi_array,axis=0)            
+
+    mov_med = np.nanmedian(mi_array,axis=0)
+    d_high = np.nanquantile(mi_array,0.75,axis=0)
+    d_low = np.nanquantile(mi_array,0.25,axis=0)            
             
     error_col = [0.75,0.75,0.75]
     edge_col = [0.75,0.75,0.75]
-    dax.fill_between(t_vec,d_low,d_high,facecolor=error_col,edgecolor=edge_col)
-    dax.plot(t_vec[::1],mi_cen[::1],color='k',marker='.',markersize=0.5,linewidth=linewidth)
-    # dax.plot(t_vec[::5],mi_cen[::5],color='k',marker='.',markersize=1,linewidth=linewidth)
-    ph.boxoff(dax)
     
+    dax.fill_between(t_vec,d_low,d_high,facecolor=error_col,edgecolor=edge_col)
+    t = np.concatenate((t_vec[0::5],[t_vec[-1]]))
+    m = np.concatenate((mov_med[0::5],[mov_med[-1]]))
+    dax.plot(t,m,color='k',marker='o',markersize=0.5,linestyle='-',
+                 markerfacecolor='k',linewidth=linewidth,label='Median')
+    dax.plot(t_vec,mov_mean,color='k',linestyle='-',linewidth=linewidth,label='Mean')
+    ph.boxoff(dax)
+    # plt.legend()
     dax.set_xlim([xmin, xmax])
     if len(ylim)==2:
         dax.set_ylim(ylim)
     dax.set_xlabel('Time (s) relative to photostimulation onset')
-    dax.set_ylabel(ylabel)    
+    dax.set_ylabel('Inst speed (mm/s)')    
     
 def plot_ripples_hist(rdata, args, hax):
     """
@@ -246,7 +244,7 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color, rax
         rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))
     else:
         ipi = 1/pulse_freq # Interpulse interval
-        for i in range(pulse_per_train[0]):
+        for i in range(pulse_per_train):
             x = i * ipi           
             rax.add_patch(rect((x,y), pw, 5, edgecolor = 'none', facecolor = laser_color))           
   

@@ -90,7 +90,7 @@ def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
                 # Normalize the ripple rate for each channel by the mean ripple
                 # rate during baseline period (i.e., period until stim onset time)
                 # This method will give equal weight to all channels
-                norm_rd = rd/np.nanmean(rd[bin_cen < 0])
+                norm_rd = 100*rd/np.nanmean(rd[bin_cen < 0])
                 norm_rip_rate.append(norm_rd)
             # Apply selection on the ripple rate
             norm_rip_rate = np.array(norm_rip_rate)
@@ -789,8 +789,8 @@ def get_processed_rip_data(keys,pulse_per_train,std,minwidth,args):
     
     # Compute instantaneous speed, after correcting for artifacts
     for rd in rdata:
-        inst_speed,fps = convert_motion_traj_to_inst_disp(rd['mx'], rd['my'])
-        rd['inst_speed'] = inst_speed        
+        inst_disp,fps = convert_motion_traj_to_inst_disp(rd['mx'], rd['my'])
+        rd['inst_speed'] = inst_disp*fps       
         
     if not len(all_pulse_freq)==len(all_pulse_width)==1:
         print('**************************************************************')
