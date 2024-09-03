@@ -84,6 +84,7 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len=True):
     # See save_neuralynx_nvt_for_python.m for how the .mat file was created.
       
     sess_t = np.array(vtd[0])
+    v_t0 = sess_t[0] # t0 for video 
     x = np.array(vtd[1])
     y = np.array(vtd[2])
         
@@ -142,7 +143,7 @@ def get_perievent_motion(key, event_ts, rt_pre, rt_post, same_len=True):
                 mx[idx] = mx[idx][0:md]
                 my[idx] = my[idx][0:md]
                 
-    return mt, mx, my, good_trials
+    return mt, mx, my, good_trials,v_t0
         
 def rotate_trajectory(rot_cen_x,rot_cen_y,tx,ty,angle):
     """ Rotate trajectory given by (tx,ty)
