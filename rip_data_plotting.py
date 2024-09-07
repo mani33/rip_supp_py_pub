@@ -35,12 +35,12 @@ linewidth = 0.5
 
 def add_sup_title(args, fh):
     # Super-title for the given figure handle fh
-    n_sess = len(args.sess_str)
+    n_sess = len(list(args.sess_str))
     t_str = []
     for i_sess in range(n_sess):
         t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.sess_str[i_sess]} "
-                     f"({args.pulse_per_train} x {args.pulse_width} ms pulse) "
-                     f"{args.pulse_freq} Hz std = {args.std[i_sess]} "
+                     f"({args.pulse_per_train[i_sess]} x {args.pulse_width[i_sess]} ms pulse) "
+                     f"{args.pulse_freq[i_sess]} Hz std = {args.std[i_sess]} "
                      f"minwidth = {args.minwidth[i_sess]} {args.beh_state}")
     # Join strings
     title_str = '\n'.join(t_str)
@@ -223,9 +223,9 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
     """
     plot the light pulses as boxes on the given axes (rax)
     Inputs:
-        pulse_width - int or float, width of light pulse in msec
-        pulse_per_train - int or float, num of light pulses per train
-        pulse_freq - int or float, Hz
+        pulse_width - list, width of light pulse in msec
+        pulse_per_train - list, num of light pulses per train
+        pulse_freq - list, Hz
         laser_color - char, 'g' for green, 'b' for blue
         rax - axes for plotting data
     Outputs:
@@ -236,31 +236,32 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
         loc = 'top'
     else:
         loc = kwargs['loc']
-
+    pulse_h_frac = 0.05 # fraction of ylimit
+     
     if loc == 'top':
-        y = rax.get_ylim()[1]*0.95
+        y = rax.get_ylim()[1]*(1 - pulse_h_frac * np.arange(len(pulse_per_train+1)))
     elif loc == 'bottom':
-        y = rax.get_ylim()[0]*(-0.01)
+        y = rax.get_ylim()[0]*(0 + pulse_h_frac * np.arange(len(pulse_per_train+1)))
     else:
         raise ValueError('loc param should be either "top" or "bottom"')
-
-    pw = pulse_width * 1e-3  # convert from ms to sec
-    if pw < 0.01:
-        pw = 0.01
-        warnings.warn(
-            'Pulse width was too short for plotting so setting it to 10ms')
-
-    if pulse_per_train == 1:
-        x = 0
-        rax.add_patch(
-            rect((x, y), pw, 5, edgecolor='none', facecolor=laser_color))
-    else:
-        ipi = 1/pulse_freq  # Interpulse interval
-        for i in range(pulse_per_train):
-            x = i * ipi
+    pulse_h = pulse_h_frac * np.max(y) * 0.95
+    for i,(pw, ppt, pf) in enumerate(zip(pulse_width, pulse_per_train, pulse_freq)):
+        pw = pw * 1e-3  # convert from ms to sec
+        if pw < 0.01:
+            pw = 0.01
+            warnings.warn(
+                'Pulse width was too short for plotting so setting it to 10ms')
+        if ppt == 1:
+            x = 0
             rax.add_patch(
-                rect((x, y), pw, 5, edgecolor='none', facecolor=laser_color))
-
+                rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=laser_color))
+        else:
+            ipi = 1/pf  # Interpulse interval
+            for j in range(ppt):
+                x = j * ipi
+                rax.add_patch(
+                    rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=laser_color))
+    rax.set_ylim([rax.get_ylim()[0],np.max(y)+pulse_h])
 
 def plot_ripples_one_session(session_ts, chan_num, pulse_per_train, std, minwidth=30):
     args = rdp.Args()
@@ -317,8 +318,44 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
 
     # Raster plot of ripples
     plot_ripples_as_dots(rdata, args, ax[0])
-    plot_light_pulses(args.pulse_width, args.pulse_per_train,
-                      args.pulse_freq, args.laser_color, ax[0])
+    
+    if type(args.pulse_per_train)==list:
+        # Find unique pulse params combination. If pulse_per_train is a list,
+        # then pulse_width and pulse_freq will also be lists of the same size
+        # as that of pulse_per_train.
+        p_array = np.vstack((args.pulse_per_train, args.pulse_width,
+                             args.pulse_freq))
+        uarray = np.unique(p_array,axis=1)
+        pulse_per_train = uarray[0,:].astype(int)
+        pulse_width = uarray[1,:]
+        pulse_freq = uarray[2,:]
+    else:
+        pulse_per_train = args.pulse_per_train
+        pulse_width = args.pulse_width
+        pulse_freq = args.pulse_freq
+    
+    #     if np.unique(pulse_per_train).size == 1:
+    #         pulse_per_train = args.pulse_per_train[0]
+    #     else:
+    #         raise ValueError(f'Pulse per train has different values: {args.pulse_per_train}')        
+        
+    # if type(args.pulse_width)==list:
+    #     # Pick one
+    #     if np.unique(args.pulse_width).size == 1:
+    #         pulse_width = args.pulse_width[0]
+    #     else:
+    #         raise ValueError(f'Pulse width has different values: {args.pulse_width}')
+    
+    # if type(args.pulse_freq)==list:
+    #     # Pick one
+    #     if np.unique(args.pulse_freq).size == 1:
+    #         pulse_freq = args.pulse_freq[0]
+    #     else:
+    #         raise ValueError(f'Pulse width has different values: {args.pulse_width}')
+    
+    
+    plot_light_pulses(pulse_width, pulse_per_train,
+                      pulse_freq, args.laser_color, ax[0])
 
     # Histogram of ripples
     plot_ripples_hist(rdata, args, ax[1])
@@ -334,8 +371,8 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
 
     # Plot head dispacement trial by trial
     plot_head_mov_by_trial(rdata, args, ax[3])
-    plot_light_pulses(args.pulse_width, args.pulse_per_train,
-                      args.pulse_freq, args.laser_color, ax[3])
+    plot_light_pulses(pulse_width, pulse_per_train,
+                      pulse_freq, args.laser_color, ax[3])
 
     # Title
     add_sup_title(args, fig)

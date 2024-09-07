@@ -19,7 +19,7 @@ import djutils as dju
 import util_py as utp
 import copy
 import scipy.signal as sig
-from scipy import interpolate
+import re
 import matplotlib.pyplot as plt
 
 # Class for default values of parameters
@@ -168,32 +168,35 @@ def collect_mouse_group_rip_data(data_sessions, args):
         # So parameters come from the first session. But in some rare circumstances
         # like the wild type mice, we need to pool two different conditions such
         # as 1 and 2 pulses per train and 3 and 5 ms pulse widths.
-        dd_one = dd.iloc[0, :]
+
         # When the same experimental condition (say pulse width, std, minwidth,
         # laser color etc) was repeated several days apart, often recording
         # channels were different though some channels overlapped. So, we will
         # pool channels across the repeated sessions in which they were recorded.
-        unique_chans = np.unique(
-            list(itertools.chain.from_iterable([str(x).split(',') for x in dd.chan])))
-
+        
+        all_chans = [re.findall(r'(\d+)',str(x)) for x in dd.chan]
+        unique_chans = np.unique([int(x) for x in itertools.chain(*all_chans)])
         # Go through each unique channel
         for ch in unique_chans:
             ch = int(ch)
             # Find which sessions had this channel
-            sel_keys, std, minwidth = [], [], []
+            sel_keys, std, minwidth, pp_train = [], [], [], []
             # Some channels may not be in all sessions
             for iKey, sess_key in enumerate(sess_keys):
-                chans_of_ikey = [int(x) for x in str(
-                    dd.iloc[iKey, :]['chan']).split(',')]
+                chan_str_list = re.findall(r'(\d+)',str(dd.iloc[iKey, :]['chan']))
+                chans_of_ikey = [int(x) for x in chan_str_list]
                 if ch in chans_of_ikey:
                     sess_key['chan_num'] = ch
                     sel_keys.append(sess_key)
+                    pp_train.append(int(dd.iloc[iKey,:]['pulse_per_train']))
                     std.append(dd.iloc[iKey, :]['std'])
                     minwidth.append(dd.iloc[iKey, :]['minwidth'])
-            rdata, args = get_processed_rip_data(sel_keys, list(dd['pulse_per_train']),
-                                                 std, minwidth, args)
+            rdata, args_out = get_processed_rip_data(sel_keys, pp_train, std,
+                                                 minwidth, args)
+            print(args_out.pulse_per_train)
+            print(args_out.pulse_width)
             ch_dic = {'animal_id': sess_keys[0]['animal_id'],
-                      'chan_num': ch, 'rdata': rdata, 'args': args}
+                      'chan_num': ch, 'rdata': rdata, 'args': args_out}
             group_data[iMouse].append(ch_dic)
         print(f'Done with mouse {iMouse}')
     return group_data
@@ -446,10 +449,7 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
               trials_with_art)
     if debug:
         plt.figure()
-        plt.subplot(1,3,1)
-        plt.stem(en)
-        plt.subplot(1,3,2)
-        plt.stem(bc_noise)
+        plt.subplot(1,3,1)       
         plt.subplot(1,3,3)
         plt.stem(qd)
     tot_art_dur = np.array(tot_art_dur)
@@ -724,7 +724,7 @@ def get_light_pulse_train_info(key, pulse_per_train):
 #     return art_idx,np.array(art_dur)
 
 
-def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=False):
+def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args_in,debug=False):
     """ Get ripple data for a single channel of a mouse recorded in one or more
         session that used the same stimulation protocol.
         Inputs:
@@ -735,7 +735,7 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=Fals
                     size must match that of keys
             std - list of std values for restricting ripples table
             minwidth - list of minwidth params for restricting ripples table
-            args -  Args object with updated params-values
+            args_in -  Args object with updated params-values
             debug - boolean, for debugging artifact correction
         Outputs:
             rdata - list of dict. len(rdata) = num of trials. Each dict contains the following keys:
@@ -760,23 +760,24 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=Fals
     # Ensure that each key has its own associated std and minwidth
     assert (len(keys) == len(std) == len(minwidth)), 'number of keys must match \
     number of std and minwidth'
-
+    
+    args = copy.deepcopy(args_in)
     # Create binning params
     pre = args.xmin * 1e6  # to microsec
     post = args.xmax * 1e6  # to microsec
 
     # Go through each channel key and collect ripple and motion data
-    cc = 0
     rdata = []
-    all_pulse_width = set()
-    all_pulse_freq = set()
+    all_pulse_width = []
+    all_pulse_freq = []
+    
     for ikey, key in enumerate(keys):
         ppt = pulse_per_train[ikey]
         # Get light pulse train info
         pon_times, poff_times, pulse_width, pulse_freq = get_light_pulse_train_info(
             key, ppt)
-        all_pulse_width.add(pulse_width)
-        all_pulse_freq.add(pulse_freq)
+        all_pulse_width.append(pulse_width)
+        all_pulse_freq.append(pulse_freq)
         # For plotting purpose, extract one pulse train on and off times in sec
         # We assume that all keys had the same stimulus train parameters, so we pick one key
         if ikey == 0:
@@ -831,7 +832,8 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=Fals
             re_rel_t = (sel_rt - ct_on)*1e-6
             # We will put all trials of sessions (keys) together. That is why
             # append operation for rdata is inside this loop!
-            rdata.append({'v_t0':v_t0,'train_onset':ct_on,'rel_mt': rel_mt[t_idx], 'mx': mx[t_idx], 'my': my[t_idx],
+            rdata.append({'v_t0':v_t0,'train_onset':ct_on,'rel_mt': rel_mt[t_idx], 
+                          'mx': mx[t_idx], 'my': my[t_idx],
                           'head_disp': head_disp, 'rip_evt': re_rel_t,
                           'session_start_time': key['session_start_time']})
 
@@ -851,7 +853,7 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=Fals
         rdata = [rdata[i]
                  for i in np.nonzero(art_dur < args.max_art_duration)[0]]
 
-    if not len(all_pulse_freq) == len(all_pulse_width) == 1:
+    if not np.unique(all_pulse_freq).size == np.unique(all_pulse_width).size == 1:
         print('**************************************************************')
         print('pulse frequencies: ', all_pulse_freq)
         print('pulse widths: ', all_pulse_width)
@@ -861,11 +863,14 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args,debug=Fals
 
     args.one_train_on = one_train_on
     args.one_train_off = one_train_off
-    args.pulse_width = pulse_width
-    args.pulse_freq = pulse_freq
+    args.pulse_width = all_pulse_width
+    args.pulse_freq = all_pulse_freq
     args.pulse_per_train = pulse_per_train
     args.mouse_id = key['animal_id']
+    args.sess_str = dju.get_sess_str_from_keys(keys)
     args.fps = fps  # frames per sec (video frame rate)
+    args.minwidth = minwidth
+    args.std = std
     args.chan_name = (cont.Chan & key & f'chan_num = {key["chan_num"]}').fetch(
         'chan_name')[0]
     
