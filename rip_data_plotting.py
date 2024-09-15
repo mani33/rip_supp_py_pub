@@ -80,7 +80,7 @@ def change_raster_yticklab_0_to_1(rax, ymax):
     rax.set_yticklabels(ytlabels[pos_ticks].astype(int))
 
 
-def plot_head_mov_by_trial(rdata, args, hdax, mov_metric='inst_speed'):
+def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
     # Plot individual trial head displacement data
     """
     Inputs: 
@@ -92,6 +92,10 @@ def plot_head_mov_by_trial(rdata, args, hdax, mov_metric='inst_speed'):
     Outputs:
         None
     """
+    if hdax==None:
+        plt.figure()
+        hdax = plt.gca()
+        
     c = 1
     sf = 1/20  # scaling factor to reduce clutter in the plot
     for v in rdata:
@@ -138,7 +142,7 @@ def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[]):
     Outputs:
         None
     """
-    t_vec, mi_list = gfun.interp_based_event_trig_data_average(t_list, v_list)
+    t_vec, mi_list = gfun.sample_event_trig_data_evenly(t_list, v_list)
     # First change into 2D array where rows are trials
     mi_array = np.stack(mi_list, axis=0)
     mov_mean = np.nanmean(mi_array, axis=0)
@@ -239,9 +243,9 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
     pulse_h_frac = 0.05 # fraction of ylimit
      
     if loc == 'top':
-        y = rax.get_ylim()[1]*(1 - pulse_h_frac * np.arange(len(pulse_per_train+1)))
+        y = rax.get_ylim()[1]*(1 - pulse_h_frac * np.arange(len(pulse_per_train)+1))
     elif loc == 'bottom':
-        y = rax.get_ylim()[0]*(0 + pulse_h_frac * np.arange(len(pulse_per_train+1)))
+        y = rax.get_ylim()[0]*(0 + pulse_h_frac * np.arange(len(pulse_per_train)+1))
     else:
         raise ValueError('loc param should be either "top" or "bottom"')
     pulse_h = pulse_h_frac * np.max(y) * 0.95
@@ -393,7 +397,7 @@ def plot_all_chan_mouse_rip_rate_matrix(grdata, wh):
     bw = grdata[0][0]['args'].bin_width/1000
     extents = [bin_cen[0]-bw/2, bin_cen[-1]+bw/2, nChan, 0]
     im = ax.imshow(rr, cmap='coolwarm', norm=TwoSlopeNorm(1),
-                   extent=extents, origin='upper')
+                   extent=extents, origin='upper',interpolation='none')
     # Mark beginning and end of channel group of each mouse
     yticks = np.cumsum(np.hstack((0, n)))
     for yt in yticks[1:-2]:

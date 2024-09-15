@@ -21,16 +21,16 @@ import copy
 import scipy.signal as sig
 import re
 import matplotlib.pyplot as plt
-
+import rip_data_plotting as rdpl
+#%%
 # Class for default values of parameters
-
 
 class Args():
     def __init__(self):
         # Data length pre and post light pulse
         self.xmin = -4.0  # Add sign appropriately. If you want 1sec before light pulse, use -1
         self.xmax = 6.0
-        self.bin_width = 200  # bin width in msec
+        self.bin_width = 100  # bin width in msec
         self.beh_state = 'nrem'  # beh state to collect ripples from: 'all','rem','nrem','awake'
 
         # in sec: time window to detect motion. Can be 4 element [-5 0 2 3] where [-5 0] and [2 3] are two separate windows.
@@ -48,7 +48,7 @@ class Args():
         self.art_trial_removal_th = 5
         # Height-to-width ratio threshold for calling a detected peak as
         # artifact in the head displacement values
-        self.art_peak_hw_ratio_th = 10
+        self.art_peak_hw_ratio_th = 7
         self.pre_and_stim_only = True
 
 # main function that calls other functions
@@ -333,7 +333,7 @@ def convert_motion_traj_to_inst_disp(px, py):
     return d, fps
 
 
-def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
+def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
                                                                   debug=False):
     """ Remove data points with abnormally high amplitude of head displacement
         and replace them with interpolated datapoints.
@@ -366,11 +366,14 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
     fps = 29.97
     tot_art_dur = []    
     qd = []
+    # if rdata[0]['session_start_time']==5375673492:
+    #     rdpl.plot_head_mov_by_trial(rdata, args)
+        
     for iTrial, rd in enumerate(rdata):
         d = rd['head_disp']
         inst_speed = rd['inst_speed']
-        n_samples = inst_speed.size
-        nb = 0  # extension samples on either side of an artifact
+        # n_samples = inst_speed.size
+        # nb = 0  # extension samples on either side of an artifact
         # head_disp and speed were calculated with two adjacent points leaving
         # the length of y one less than that of t. So we will exclude the last
         # time point and shift all times forward by half bin width
@@ -379,14 +382,23 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
         # Replace outliers with interpolated values
 
         pdata = sig.find_peaks(d, height=s, width=0.5, rel_height=0.9)
+        peak_ind = pdata[0]
         hw_ratio = pdata[1]['peak_heights']/pdata[1]['widths']
         
         d1 = np.diff(d);
         q = np.quantile(d1,[0.05,0.95])
         qd.append(q[1]-q[0])
-        
+        # if (iTrial >= 60) & (rd['session_start_time']==5375673492):
+        #     plt.figure() 
+        #     plt.plot(bin_cen_t,inst_speed)
+        #     plt.title(str(iTrial))
         art_dur = 0
         outliers = np.zeros(bin_cen_t.size, dtype=bool)
+        # if (rdata[0]['session_start_time']==5375673492) & (iTrial==91):
+        #     debug = True
+        #     spdata = copy.deepcopy(pdata)
+        # else:
+        #     debug = False
         if hw_ratio.size > 0:
             real_bad = hw_ratio > art_peak_hw_ratio_th
             if np.any(real_bad):
@@ -395,10 +407,13 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
                     print(f'max hw ratio: {np.round(np.max(hw_ratio),2)}')
                     plt.figure()
                     plt.subplot(1, 3, 1)
-                    plt.plot(bin_cen_t, d)
+                    plt.plot(bin_cen_t, inst_speed)
+                    plt.scatter(bin_cen_t[peak_ind],inst_speed[peak_ind],c='r',marker='*')
+                    yl = plt.ylim()
                     plt.xlabel('Relative time (s)')
                     plt.ylabel('Displacement (pix)')
                     plt.title('Before artifact correction')
+                    
                     plt.subplot(1, 3, 3)
                     plt.stem(hw_ratio)
                     plt.tight_layout()
@@ -435,10 +450,12 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
             if debug:
                 plt.subplot(1, 3, 2)
                 plt.plot(bin_cen_t, inst_speed, color='r')
+                plt.scatter(bin_cen_t[peak_ind],inst_speed[peak_ind],c='b',marker='*')
                 plt.tight_layout()
                 plt.title('After artifact correction')
                 plt.ylabel('inst speed (mm/s)')
                 plt.xlabel('Rel time (s)')
+                plt.ylim(yl)
         rdata[iTrial]['art_idx'] = art
     
     n_trials_corrected = len(trials_with_art)
@@ -462,6 +479,10 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=10,
     
     # Some corrected trials are removed. So we will adjust for that.
     corrected_trials = list(set(corrected_trials)-set(removed_trials))
+    
+    # if rdata[0]['session_start_time']==5375673492:
+    #     rdpl.plot_head_mov_by_trial(rdata, args)
+    
     return tot_art_dur, rdata, corrected_trials, list(removed_trials)
 
 
@@ -623,106 +644,6 @@ def get_light_pulse_train_info(key, pulse_per_train):
         pulse_freq = 1/(np.median(np.diff(train_on))*1e-6)
 
     return pon, poff, pulse_width, pulse_freq
-
-
-# def get_disp_artifacts(rdata,art_peak_hw_ratio_th=10):
-#     """ Identify displacement data point locations with abnormally high
-#         amplitude of head displacement.
-#     Inputs:
-#         rdata: dict containing keys (rel_mt,head_disp etc)
-#         art_peak_hw_ratio_th - artifacts' height-to-width ratio threshold above
-#                 which peaks will be interpolated with surrounding values.
-#     Output:
-#         art_idx - list (len = nTrials) of 1d numpy array of indices of artifact
-#                 locations in the displacement values within each trial
-#         art_dur - 1d numpy array (nTrials,) of artifact duration in sec
-
-#     """
-#     debug=True
-
-#     all_hd = np.concatenate(head_disp)
-#     s = np.nanstd(all_hd)
-
-#     trials_with_art = []
-#     fps = 29.97
-#     art_dur = []
-#     art_idx = []
-#     for iTrial,(t,hd,cmx,cmy) in enumerate(zip(rel_mt,head_disp,mx,my)):
-#         # head_disp was calculated with two adjacent points leaving the length
-#         # of hd one less than that of t. So we will exclude the last time point.
-#         # We can do this because the exact value of t is unimportant
-#         t = t[:-1]
-#         # Replace outliers with interpolated values
-
-#         pdata = sig.find_peaks(hd,height=s,width=0.5,rel_height=0.9)
-#         hw_ratio = pdata[1]['peak_heights']/pdata[1]['widths']
-
-#         trial_art_dur = 0
-#         outliers = np.zeros(t.size,dtype=bool)
-#         if hw_ratio.size>0:
-#             real_bad = hw_ratio > art_peak_hw_ratio_th
-#             if np.any(real_bad):
-#                 if debug:
-#                     print(f'Height_width ratios: {hw_ratio}')
-#                     print(f'max hw ratio: {np.round(np.max(hw_ratio),2)}')
-#                     plt.clf()
-#                     plt.subplot(1,3,1)
-#                     plt.plot(t,hd)
-#                     plt.subplot(1,3,2)
-#                     plt.plot(t,cmx[:-1],color='aqua')
-#                     plt.plot(t,cmy[:-1],color='plum')
-#                     plt.subplot(1,3,3)
-#                     plt.stem(hw_ratio)
-#                     plt.tight_layout()
-#                     hw_th = art_peak_hw_ratio_th
-#                     plt.plot(plt.xlim(),[hw_th,hw_th],color='gray')
-#                     plt.draw()
-#                 trial_art_dur = (pdata[1]['widths'][real_bad])*(1/fps)
-#                 left_ips = pdata[1]['left_ips'][real_bad].astype(int)
-#                 right_ips = pdata[1]['right_ips'][real_bad].astype(int)
-#                 for w1,w2 in zip(left_ips,right_ips):
-#                     outliers[w1:w2+1]=True
-
-#         art_dur.append(np.sum(trial_art_dur))
-
-#         # Correct artifact segments
-#         sel = np.zeros(t.size,dtype=bool)
-#         if np.any(outliers):
-#             trials_with_art.append(iTrial)
-#             # sel = (~outliers) & ~np.isnan(hd)
-#             sel = outliers | np.isnan(hd)
-
-#             # # For directly correcting mx and my, we need to increment the location
-#             # # of the artifact in the head displacemtn indices by 1.
-#             # sel_xy_idx = np.nonzero(sel)[0]+1
-#             # outlier_xy_idx = np.nonzero(outliers)[0]+1
-
-#             sel_t = t[sel]
-#             sel_hd = hd[sel]
-#             # sel_x = cmx[sel_xy_idx]
-#             # sel_y = cmy[sel_xy_idx]
-#             outlier_replace_hd = np.interp(t[outliers],sel_t,sel_hd)
-#             # outlier_replace_x = np.interp(t[outlier_xy_idx],sel_t,sel_x)
-#             # outlier_replace_y = np.interp(t[outlier_xy_idx],sel_t,sel_y)
-
-#             # # When hd gets updated here, the original head_disp gets
-#             # # updated.
-#             hd[outliers] = outlier_replace_hd
-#             # cmx[outlier_xy_idx] = outlier_replace_x
-#             # cmy[outlier_xy_idx] = outlier_replace_y
-#             if debug:
-#                 plt.subplot(1,3,1)
-#                 plt.plot(t,hd,color='m')
-#                 plt.subplot(1,3,2)
-#                 plt.plot(t,cmx[:-1])
-#                 plt.plot(t,cmy[:-1])
-#                 plt.draw()
-
-#     if len(trials_with_art)>0:
-#         print('Trials for which artifacts corrected: ',trials_with_art)
-
-#     return art_idx,np.array(art_dur)
-
 
 def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args_in,debug=False):
     """ Get ripple data for a single channel of a mouse recorded in one or more
@@ -906,62 +827,64 @@ def get_ripple_rate(rdata, bin_width, xmin, xmax):
     return rip_rate, bin_edges, bin_cen
 
 
-def pool_head_mov_across_mice(group_data, metric, within_mouse_operator):
+def pool_head_mov_across_mice(group_data, within_mouse_operator):
     """
     Pool head displacement across mice. We will not normalize within each mouse
     Inputs:
         group_data - list (mice) of list(channels) of dict (ripple data), this
                     is an output from collect_mouse_group_rip_data(...) function call.
-        metric - string; must be either 'disp' (head displacement) or 'inst_speed'
         within_mouse_operator - str, should be 'mean' or 'median' - tells you if mean
                               or median is computed across trials within a mouse
     Outputs:
         t_bin_cen_vec - 1D numpy array of bin center times(s) relative to
                         stimulus onset
-        all_rr - 2D numpy array, nMice-by-nTimeBins of head movement metric
+        all_rr - 2D numpy array, nMice-by-nTimeBins of head inst speed
                 (mean or median)
 
     MS 2022-03-14/2024-08-08
 
     """
-    all_rr = []
+    all_rr_list = []
+    tm_bin_cen_list = []
     for md in group_data:  # loop over mice
         # For each mouse pick head disp data
         crdata = copy.deepcopy(md[0]['rdata'])
-        n = len(crdata)
-        t_list = []
-        vx_list = []
-        vy_list = []
-        art_idx = []
-        for jj in range(n):
-            t_list.append(crdata[jj]['rel_mt'])
-            vx_list.append(crdata[jj]['mx'])
-            vy_list.append(crdata[jj]['my'])
-            art_idx.append(crdata[jj]['art_idx'])
-
-        # Use interpolation and compute a common time vector for all stimulation
-        # trials, and the x and y coordinates corresponding to the common time points.
-        t_vec, mxi_list = gfun.interp_based_event_trig_data_average(
-            t_list, vx_list)
-        _, myi_list = gfun.interp_based_event_trig_data_average(
-            t_list, vy_list)
-
+        
         # Compute head displacement  or instantaneuous speed
         # using movement info from two adjacent video frames
         # Create time bin centers
-        ifi = np.nanmedian(np.diff(t_vec))  # inter-frame-interval
-        t_bin_cen = t_vec[0:-1]+ifi/2
+        
+        t_bin_cen_list = []
+        for cr in crdata:
+            rt = cr['rel_mt']
+            ifi = np.nanmedian(np.diff(rt))  # inter-frame-interval
+            tbc = rt[0:-1]+ifi/2
+            t_bin_cen_list.append(tbc)
+        
+        # vx_list = [cr['mx'] for cr in crdata]
+        # vy_list = [cr['my'] for cr in crdata]
+        ins_list = [cr['inst_speed'] for cr in crdata]        
 
-        # Compute head displacement in mm
-        d_array = [convert_motion_traj_to_inst_disp(px, py)[0]
-                   for px, py in zip(mxi_list, myi_list)]
-        match metric:
-            case 'inst_speed':
-                mi_list = [di/ifi for di in d_array]  # mm/sec
-            case 'disp':
-                mi_list = d_array  # mm
-            case _:
-                raise ValueError('metric must be either inst_speed or disp')
+        # # Use interpolation and compute a common time vector for all stimulation
+        # # trials, and the x and y coordinates corresponding to the common time points.
+        # t_bin_cen, mxi_list = gfun.interp_based_event_trig_data_average(
+        #     t_bin_cen_list, vx_list)
+        # _, myi_list = gfun.interp_based_event_trig_data_average(
+        #     t_bin_cen_list, vy_list)
+        t_bin_cen, ins_speedi_list = gfun.sample_event_trig_data_evenly(
+            t_bin_cen_list, ins_list)
+        
+        tm_bin_cen_list.append(t_bin_cen)
+        # # Compute head displacement in mm
+        # d_array = [convert_motion_traj_to_inst_disp(px, py)[0]
+        #            for px, py in zip(mxi_list, myi_list)]
+        # match metric:
+        #     case 'inst_speed':              
+        mi_list = ins_speedi_list # mm/sec
+            # case 'disp':
+            #     mi_list = d_array  # mm
+            # case _:
+            #     raise ValueError('metric must be either inst_speed or disp')
 
         # Pool data within mouse:
         # first change into 2D array where rows are trials
@@ -974,8 +897,11 @@ def pool_head_mov_across_mice(group_data, metric, within_mouse_operator):
             raise ValueError(
                 'within_mouse_operator should be "mean" or "median"')
 
-        all_rr.append(mi_cen)
+        all_rr_list.append(mi_cen)
 
-    all_rr = np.array(all_rr)
+    # Make sure all mice have the same time base
+    t_bin_cen, all_rri_list = gfun.sample_event_trig_data_evenly(
+        tm_bin_cen_list, all_rr_list)  
+    all_rr = np.array(all_rri_list)
 
     return t_bin_cen, all_rr

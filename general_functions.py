@@ -179,10 +179,10 @@ def rotate_trajectory(rot_cen_x,rot_cen_y,tx,ty,angle):
     # evs_rot_led_coord = rot(evs,angle_to_rotate[0])
     
     
-def interp_based_event_trig_data_average(t_list, v_list):
-    """ Average the data of multiple trials into a single vector. Using linear interpolation, 
-    all values will be sampled at the same time point. time vector will be decided by the
-    min and max of all time vectors pooled. This code assumes that data is event triggered
+def sample_event_trig_data_evenly(t_list, v_list):
+    """ Using linear interpolation, all values in the v_list will be sampled at
+    the same time point. time vector will be decided by the min and max of all
+    time vectors pooled. This code assumes that data is event triggered
     and time is relative to the event. Therefore, you should have time zero in the
     t_list.
     Inputs:
