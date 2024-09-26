@@ -230,7 +230,7 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
         pulse_width - list, width of light pulse in msec
         pulse_per_train - list, num of light pulses per train
         pulse_freq - list, Hz
-        laser_color - char, 'g' for green, 'b' for blue
+        laser_color - list, 'g' for green, 'b' for blue
         rax - axes for plotting data
     Outputs:
         None
@@ -249,7 +249,7 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
     else:
         raise ValueError('loc param should be either "top" or "bottom"')
     pulse_h = pulse_h_frac * np.max(y) * 0.95
-    for i,(pw, ppt, pf) in enumerate(zip(pulse_width, pulse_per_train, pulse_freq)):
+    for i,(pw, ppt, pf, lc) in enumerate(zip(pulse_width, pulse_per_train, pulse_freq, laser_color)):
         pw = pw * 1e-3  # convert from ms to sec
         if pw < 0.01:
             pw = 0.01
@@ -258,13 +258,13 @@ def plot_light_pulses(pulse_width, pulse_per_train, pulse_freq, laser_color,
         if ppt == 1:
             x = 0
             rax.add_patch(
-                rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=laser_color))
+                rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=lc))
         else:
             ipi = 1/pf  # Interpulse interval
             for j in range(ppt):
                 x = j * ipi
                 rax.add_patch(
-                    rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=laser_color))
+                    rect((x, y[i]), pw, pulse_h, edgecolor='none', facecolor=lc))
     rax.set_ylim([rax.get_ylim()[0],np.max(y)+pulse_h])
 
 def plot_ripples_one_session(session_ts, chan_num, pulse_per_train, std, minwidth=30):

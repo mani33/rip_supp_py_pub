@@ -21,8 +21,8 @@ import copy
 import scipy.signal as sig
 import re
 import matplotlib.pyplot as plt
-import rip_data_plotting as rdpl
-#%%
+
+#%% Functions
 # Class for default values of parameters
 
 class Args():
@@ -193,6 +193,9 @@ def collect_mouse_group_rip_data(data_sessions, args):
                     minwidth.append(dd.iloc[iKey, :]['minwidth'])
             rdata, args_out = get_processed_rip_data(sel_keys, pp_train, std,
                                                  minwidth, args)
+            # Add useful info to args_out
+            args_out.session_type = list(dd['session_type'])
+            args_out.laser_color = list(dd['laser_color'])
             print(args_out.pulse_per_train)
             print(args_out.pulse_width)
             ch_dic = {'animal_id': sess_keys[0]['animal_id'],
@@ -357,7 +360,11 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
     # but won't correct them first. Instead, we will go and fix the artifacts in
     # the x and y coordinates and then recompute head displacement based on the
     # new values.
-
+    
+    # Add a buffer at edges to capture any artifacts that 
+    # start or end high at the edges. Later we will remove them before
+    # saving.
+    nbp = 1 # buffer points
     dd = [d['head_disp'] for d in rdata]
     dd = np.concatenate(dd)
     s = np.nanstd(dd)
@@ -366,21 +373,34 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
     fps = 29.97
     tot_art_dur = []    
     qd = []
-    # if rdata[0]['session_start_time']==5375673492:
+    
+    # if rdata[0]['session_start_time']==5315118162:
     #     rdpl.plot_head_mov_by_trial(rdata, args)
         
     for iTrial, rd in enumerate(rdata):
         d = rd['head_disp']
         inst_speed = rd['inst_speed']
+        # Add a buffer at edges to capture any artifacts that 
+        # start or end high at the edges. Later we will remove them before
+        # saving.
+        bvi = np.min(inst_speed)*np.ones(nbp)
+        bvd = np.min(d)*np.ones(nbp)
+        inst_speed = np.hstack((bvi,inst_speed,bvi))
+        d = np.hstack((bvd,d,bvd))
         # n_samples = inst_speed.size
         # nb = 0  # extension samples on either side of an artifact
         # head_disp and speed were calculated with two adjacent points leaving
         # the length of y one less than that of t. So we will exclude the last
         # time point and shift all times forward by half bin width
-        hbw = np.nanmedian(np.diff(rd['rel_mt']))/2
+        bw = np.nanmedian(np.diff(rd['rel_mt']))
+        hbw = bw/2
         bin_cen_t = rd['rel_mt'][:-1] + hbw
-        # Replace outliers with interpolated values
-
+        b_pre = np.arange(-nbp,0)*bw + bin_cen_t[0]
+        b_post = np.arange(1,nbp+1)*bw + bin_cen_t[-1]
+        # Add buffer
+        bin_cen_t = np.hstack((b_pre,bin_cen_t,b_post))
+        
+        # Replace outliers with interpolated values    
         pdata = sig.find_peaks(d, height=s, width=0.5, rel_height=0.9)
         peak_ind = pdata[0]
         hw_ratio = pdata[1]['peak_heights']/pdata[1]['widths']
@@ -394,9 +414,8 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
         #     plt.title(str(iTrial))
         art_dur = 0
         outliers = np.zeros(bin_cen_t.size, dtype=bool)
-        # if (rdata[0]['session_start_time']==5375673492) & (iTrial==91):
+        # if (rdata[0]['session_start_time']==5315118162) :
         #     debug = True
-        #     spdata = copy.deepcopy(pdata)
         # else:
         #     debug = False
         if hw_ratio.size > 0:
@@ -440,13 +459,14 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
             # Shift indices by 1 to account for differencing in computing
             # displacement
             gis = inst_speed[good_part_ind]
+            gdisp = d[good_part_ind]
             gt = bin_cen_t[good_part_ind]
             outlier_ind = np.nonzero(outliers)[0]
             # Fix artifact segments by interpolation
             gis_out = np.interp(bin_cen_t[outlier_ind], gt, gis)
-
+            gdisp_out = np.interp(bin_cen_t[outlier_ind], gt, gdisp)
             inst_speed[outlier_ind] = gis_out
-
+            d[outlier_ind] = gdisp_out
             if debug:
                 plt.subplot(1, 3, 2)
                 plt.plot(bin_cen_t, inst_speed, color='r')
@@ -456,7 +476,11 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
                 plt.ylabel('inst speed (mm/s)')
                 plt.xlabel('Rel time (s)')
                 plt.ylim(yl)
-        rdata[iTrial]['art_idx'] = art
+            
+            # Trim away buffer & store
+            rdata[iTrial]['inst_speed'] = inst_speed[nbp:-nbp]
+            rdata[iTrial]['head_disp'] = inst_speed[nbp:-nbp]
+        rdata[iTrial]['art_idx'] = art[nbp:-nbp]
     
     n_trials_corrected = len(trials_with_art)
     corrected_trials = trials_with_art
@@ -480,9 +504,11 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
     # Some corrected trials are removed. So we will adjust for that.
     corrected_trials = list(set(corrected_trials)-set(removed_trials))
     
-    # if rdata[0]['session_start_time']==5375673492:
+    # if rdata[0]['session_start_time']==5315118162:
     #     rdpl.plot_head_mov_by_trial(rdata, args)
-    
+    #     plt.figure()
+    #     rdpl.plot_head_mov_by_trial([rr for ii,rr in enumerate(rdata) if ii not in removed_trials], args)
+    #     1
     return tot_art_dur, rdata, corrected_trials, list(removed_trials)
 
 
