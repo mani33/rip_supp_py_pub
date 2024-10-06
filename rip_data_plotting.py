@@ -185,9 +185,10 @@ def plot_ripples_hist(rdata, args, hax):
     rip_rate, bins, _ = rdp.get_ripple_rate(
         rdata, args.bin_width, args.xmin, args.xmax)
     hax.hist(bins[:-1], bins,  weights=rip_rate, color='k', rwidth=1)
-    # x-axis data is set tight.
-    # hax.margins(0.0,0.075)
+    # Mark the baseline mean
+    bm = np.mean(rip_rate[bins[:-1]<0])    
     hax.set_xlim([args.xmin, args.xmax])
+    hax.scatter(hax.get_xlim()[0],bm,s=12,c='r')
     hax.set_xlabel('Time (s) relative to photostimulation onset')
     hax.set_ylabel('Ripples/s')
 
@@ -336,31 +337,10 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
     else:
         pulse_per_train = args.pulse_per_train
         pulse_width = args.pulse_width
-        pulse_freq = args.pulse_freq
-    
-    #     if np.unique(pulse_per_train).size == 1:
-    #         pulse_per_train = args.pulse_per_train[0]
-    #     else:
-    #         raise ValueError(f'Pulse per train has different values: {args.pulse_per_train}')        
-        
-    # if type(args.pulse_width)==list:
-    #     # Pick one
-    #     if np.unique(args.pulse_width).size == 1:
-    #         pulse_width = args.pulse_width[0]
-    #     else:
-    #         raise ValueError(f'Pulse width has different values: {args.pulse_width}')
-    
-    # if type(args.pulse_freq)==list:
-    #     # Pick one
-    #     if np.unique(args.pulse_freq).size == 1:
-    #         pulse_freq = args.pulse_freq[0]
-    #     else:
-    #         raise ValueError(f'Pulse width has different values: {args.pulse_width}')
-    
-    
+        pulse_freq = args.pulse_freq    
+     
     plot_light_pulses(pulse_width, pulse_per_train,
                       pulse_freq, args.laser_color, ax[0])
-
     # Histogram of ripples
     plot_ripples_hist(rdata, args, ax[1])
 

@@ -196,6 +196,7 @@ def collect_mouse_group_rip_data(data_sessions, args):
             # Add useful info to args_out
             args_out.session_type = list(dd['session_type'])
             args_out.laser_color = list(dd['laser_color'])
+            args_out.opsin = list(dd['opsin'])
             print(args_out.pulse_per_train)
             print(args_out.pulse_width)
             ch_dic = {'animal_id': sess_keys[0]['animal_id'],
