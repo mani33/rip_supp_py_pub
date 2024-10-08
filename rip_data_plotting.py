@@ -35,10 +35,10 @@ linewidth = 0.5
 
 def add_sup_title(args, fh):
     # Super-title for the given figure handle fh
-    n_sess = len(list(args.sess_str))
+    n_sess = len(list(args.session_ts))
     t_str = []
     for i_sess in range(n_sess):
-        t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.sess_str[i_sess]} "
+        t_str.append(f"M{args.mouse_id},{args.chan_name}, {args.title}, {args.session_ts[i_sess]} "
                      f"({args.pulse_per_train[i_sess]} x {args.pulse_width[i_sess]} ms pulse) "
                      f"{args.pulse_freq[i_sess]} Hz std = {args.std[i_sess]} "
                      f"minwidth = {args.minwidth[i_sess]} {args.beh_state}")

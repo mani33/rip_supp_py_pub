@@ -50,6 +50,9 @@ class Args():
         # artifact in the head displacement values
         self.art_peak_hw_ratio_th = 7
         self.pre_and_stim_only = True
+        # Threshold (ripple rate Hz in baseline) below which we will exclude 
+        # a recording session
+        self.baseline_rip_rate_th = 0.2
 
 # main function that calls other functions
 
@@ -160,9 +163,9 @@ def collect_mouse_group_rip_data(data_sessions, args):
     group_data = [[] for _ in range(uids.size)]
     for iMouse, m_id in enumerate(uids):
         # Get data slice corresponding to the current mouse
-        dd = data_sessions[ids == m_id]
-        sess_keys = [dju.get_key_from_session_ts(
-            sess_ts)[0] for sess_ts in list(dd.session_ts)]
+        mouse_dd = data_sessions[ids == m_id]
+        mouse_keys = [dju.get_key_from_session_ts(
+            sess_ts)[0] for sess_ts in list(mouse_dd.session_ts)]
         # It is assumed that all repeated sessions of any mouse have the same
         # set of experimental parameters excluding recording channels.
         # So parameters come from the first session. But in some rare circumstances
@@ -174,7 +177,7 @@ def collect_mouse_group_rip_data(data_sessions, args):
         # channels were different though some channels overlapped. So, we will
         # pool channels across the repeated sessions in which they were recorded.
         
-        all_chans = [re.findall(r'(\d+)',str(x)) for x in dd.chan]
+        all_chans = [re.findall(r'(\d+)',str(x)) for x in mouse_dd.chan]
         unique_chans = np.unique([int(x) for x in itertools.chain(*all_chans)])
         # Go through each unique channel
         for ch in unique_chans:
@@ -182,29 +185,76 @@ def collect_mouse_group_rip_data(data_sessions, args):
             # Find which sessions had this channel
             sel_keys, std, minwidth, pp_train = [], [], [], []
             # Some channels may not be in all sessions
-            for iKey, sess_key in enumerate(sess_keys):
-                chan_str_list = re.findall(r'(\d+)',str(dd.iloc[iKey, :]['chan']))
+            sel_key_ind = np.zeros(len(mouse_keys), dtype=bool)
+            for iKey, sess_key in enumerate(mouse_keys):
+                chan_str_list = re.findall(r'(\d+)',str(mouse_dd.iloc[iKey, :]['chan']))
                 chans_of_ikey = [int(x) for x in chan_str_list]
                 if ch in chans_of_ikey:
                     sess_key['chan_num'] = ch
                     sel_keys.append(sess_key)
-                    pp_train.append(int(dd.iloc[iKey,:]['pulse_per_train']))
-                    std.append(dd.iloc[iKey, :]['std'])
-                    minwidth.append(dd.iloc[iKey, :]['minwidth'])
+                    pp_train.append(int(mouse_dd.iloc[iKey,:]['pulse_per_train']))
+                    std.append(mouse_dd.iloc[iKey, :]['std'])
+                    minwidth.append(mouse_dd.iloc[iKey, :]['minwidth'])
+                    # Save index
+                    sel_key_ind[iKey] = True
             rdata, args_out = get_processed_rip_data(sel_keys, pp_train, std,
                                                  minwidth, args)
-            # Add useful info to args_out
-            args_out.session_type = list(dd['session_type'])
-            args_out.laser_color = list(dd['laser_color'])
-            args_out.opsin = list(dd['opsin'])
-            print(args_out.pulse_per_train)
-            print(args_out.pulse_width)
-            ch_dic = {'animal_id': sess_keys[0]['animal_id'],
-                      'chan_num': ch, 'rdata': rdata, 'args': args_out}
-            group_data[iMouse].append(ch_dic)
+            # ============ Exclude sessions having low ripple rate ============
+            rdata, good_sess, good_sess_start_times = \
+                                    remove_sess_with_low_rip_rate(rdata, args)
+            # ============ Exclude sessions having low ripple rate ============
+                       
+            animal_id = mouse_keys[0]['animal_id']
+            if len(rdata) > 0:               
+                # Add useful info to args_out
+                args_out.pulse_width = list(mouse_dd['pulse_width'][sel_key_ind][good_sess])
+                args_out.pulse_freq = list(np.array(args_out.pulse_freq)[good_sess])
+                args_out.pulse_per_train = list(mouse_dd['pulse_per_train'][sel_key_ind][good_sess])            
+                args_out.session_type = list(mouse_dd['session_type'][sel_key_ind][good_sess])
+                args_out.laser_color = list(mouse_dd['laser_color'][sel_key_ind][good_sess])
+                args_out.opsin = list(mouse_dd['opsin'][sel_key_ind][good_sess])
+                args_out.session_ts = list(mouse_dd['session_ts'][sel_key_ind][good_sess])
+                ch_dic = {'animal_id': animal_id,
+                          'chan_num': ch, 'rdata': rdata, 'args': args_out}
+                group_data[iMouse].append(ch_dic)
+            else:
+                print(f'Mouse {animal_id} was excluded due to low ripple rate')
         print(f'Done with mouse {iMouse}')
     return group_data
 
+def remove_sess_with_low_rip_rate(rdata, args):
+    """ Remove bad sessions
+    Inputs:
+        rdata - comes from: rdata, args_out = get_processed_rip_data(...)
+        args -  Args object with updated params-values
+    Outputs:
+        rdata - rdata with trials from bad sessions removed
+        good_sess_start_times - 1d np array of session start times of good sessions
+    """
+    # Get unique sessions
+    sess_start_times = np.array([x['session_start_time'] for x in rdata])
+    # Maintain order when finding unique sessions
+    _,idx = np.unique(sess_start_times, return_index=True)
+    u_sess_start_times = sess_start_times[np.sort(idx)]
+    good_sess_data = []
+    n_sess = u_sess_start_times.size    
+    good_sess = np.zeros(idx.size,dtype=bool)
+    for isess,ust in enumerate(u_sess_start_times):
+        # Collect trials of given session
+        sel = np.nonzero(sess_start_times==ust)[0]
+        sel_rdata = [rdata[s] for s in sel]
+        rip_rate, bins, _ = get_ripple_rate(sel_rdata, args.bin_width, 
+                                                args.xmin, args.xmax)
+        baseline_rip_rate = np.nanmean(rip_rate[bins[0:-1] < 0])
+        if baseline_rip_rate >= args.baseline_rip_rate_th:
+            good_sess_data.append(sel_rdata)            
+            good_sess[isess] = True
+    rdata = list(itertools.chain(*good_sess_data))
+    n_sess_excluded = n_sess-np.count_nonzero(good_sess)
+    good_sess_start_times = u_sess_start_times[good_sess]
+    if n_sess_excluded > 0:
+        print(f'{n_sess_excluded} sessions were excluded due to low baseline ripple rate')       
+    return rdata, good_sess, good_sess_start_times
 
 def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
     """
@@ -810,12 +860,16 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args_in,debug=F
         print('**************************************************************')
 
     args.one_train_on = one_train_on
-    args.one_train_off = one_train_off
+    args.one_train_off = one_train_off   
+    args.mouse_id = key['animal_id']
+    # pulse_width, pulse_freq, pulse per train and session_ts may be updated 
+    # by collect_mouse_group_rip_data function if it decides that some sessions 
+    # are not good
     args.pulse_width = all_pulse_width
     args.pulse_freq = all_pulse_freq
     args.pulse_per_train = pulse_per_train
-    args.mouse_id = key['animal_id']
-    args.sess_str = dju.get_sess_str_from_keys(keys)
+    args.session_ts = dju.get_sess_str_from_keys(keys)
+    
     args.fps = fps  # frames per sec (video frame rate)
     args.minwidth = minwidth
     args.std = std
