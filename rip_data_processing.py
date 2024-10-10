@@ -220,6 +220,9 @@ def collect_mouse_group_rip_data(data_sessions, args):
             else:
                 print(f'Mouse {animal_id} was excluded due to low ripple rate')
         print(f'Done with mouse {iMouse}')
+    # Some mice may not have data with sufficient baseline ripple rate. For 
+    # them, data will be []. We will remove those here:   
+    group_data = [gd for gd in group_data if len(gd) > 0]        
     return group_data
 
 def remove_sess_with_low_rip_rate(rdata, args):
