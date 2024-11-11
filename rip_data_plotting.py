@@ -24,9 +24,7 @@ import matplotlib
 matplotlib.rcParams['pdf.fonttype'] = 42
 # matplotlib.rcParams['svg.fonttype'] = 42
 
-
 linewidth = 0.5
-
 
 # For separate window, use %matplotlib qt
 # For inline plots, use %matplotlib inline
@@ -58,7 +56,7 @@ def add_yticklab_for_last_trial(rax, n_trials):
     dt = np.diff(yticks[-2::])
     # if the last but one tick label is too close to the ntrials
     # tick label, we will delete it.
-    if np.abs(dt) < 0.25*d:
+    if np.abs(dt) < 0.35*d:
         yticks = np.delete(yticks, -2)
     ytlabels = copy.copy(yticks)
     pos_ticks = yticks >= 0
@@ -88,7 +86,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
         hdax - axis handle on which to plot data
         mov_metric - 'disp' or 'inst_speed'; We will plot instantaneous speed (mm/s) 
                     by default. If 'disp', instantaneous displacement in 
-                    pixels will be plotted.
+                    pixels will be plotted.        
     Outputs:
         None
     """
@@ -97,7 +95,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
         hdax = plt.gca()
         
     c = 1
-    sf = 1/20  # scaling factor to reduce clutter in the plot
+    sf = 1/20  # scaling factor to reduce clutter in the plot    
     for v in rdata:
         # Get bin centers for rel_mt since head_disp was computed from two
         # adjacent frames
@@ -195,29 +193,29 @@ def plot_ripples_hist(rdata, args, hax):
 
 def plot_ripples_as_dots(rdata, args, rax, markersize=1,
                          xlabel='Time (s) relative to photostimulation onset',
-                         ylabel='Photostimulation trial',
-                         marker='.'):
+                         ylabel='Photostimulation trial', marker='.', ytick_inc=50):
     """
     Raster plot of ripples
     Inputs:
         rdata, args = rip_data_processing.get_processed_rip_data(...)
-        rax - axes on which to plot data
+        rax - axes on which to plot data        
     Outputs:
         None
-    """
+    """    
     for idx, rd in enumerate(rdata):
         rip_times = rd['rip_evt']
         rax.plot(rip_times, (np.ones(rip_times.shape)*idx)+1, marker=marker,
                  markersize=markersize, color='k', linestyle='none')
 
-    # x-axis data is set tight.
-    rax.margins(0.00, 0.075)
-    rax.set_xlim([args.xmin, args.xmax])
+    rax.set_xlim([args.xmin, args.xmax]) 
     # Leave space for light pulse on the top but keep bottom tight
     ylim_max = rax.get_ylim()[1]
     rax.set_ylim(-2, ylim_max)
     rax.set_xlabel(xlabel)
     rax.set_ylabel(ylabel)
+    yt = np.arange(0,ylim_max,ytick_inc).astype(int)
+    rax.set_yticks(yt)
+    rax.set_yticklabels(yt)
     change_raster_yticklab_0_to_1(rax, ylim_max)
     # Add a ytick label for the last trial
     add_yticklab_for_last_trial(rax, idx+1)
