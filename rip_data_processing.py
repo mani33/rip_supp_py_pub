@@ -7,8 +7,7 @@ ripple suppression.
 """
 
 # Get database tables
-import itertools
-from itertools import compress
+from itertools import compress, chain
 import logging
 import numpy as np
 import acq as acq
@@ -20,6 +19,7 @@ import util_py as utp
 import copy
 import scipy.signal as sig
 import re
+import pandas as pd
 import matplotlib.pyplot as plt
 
 #%% Functions
@@ -178,7 +178,7 @@ def collect_mouse_group_rip_data(data_sessions, args):
         # pool channels across the repeated sessions in which they were recorded.
         
         all_chans = [re.findall(r'(\d+)',str(x)) for x in mouse_dd.chan]
-        unique_chans = np.unique([int(x) for x in itertools.chain(*all_chans)])
+        unique_chans = np.unique([int(x) for x in chain(*all_chans)])
         # Go through each unique channel
         for ch in unique_chans:
             ch = int(ch)
@@ -252,14 +252,14 @@ def remove_sess_with_low_rip_rate(rdata, args):
         if baseline_rip_rate >= args.baseline_rip_rate_th:
             good_sess_data.append(sel_rdata)            
             good_sess[isess] = True
-    rdata = list(itertools.chain(*good_sess_data))
+    rdata = list(chain(*good_sess_data))
     n_sess_excluded = n_sess-np.count_nonzero(good_sess)
     good_sess_start_times = u_sess_start_times[good_sess]
     if n_sess_excluded > 0:
         print(f'{n_sess_excluded} sessions were excluded due to low baseline ripple rate')       
     return rdata, good_sess, good_sess_start_times
 
-def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
+def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth='avg'):
     """
     Within a given recording session, for each photostim trial,
     we will average binned ripple counts across all available channels. Then, we
@@ -276,14 +276,14 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
                         len(rdata) = num of trials. Each dict contains the following keys:
                         'rel_mt' - numpy array of time (sec) relative to stim train onset
                         'mx','my' - numpy array of tracker LED x and y coodinate respectively
-                        'head_disp' - numpy array of head displacement per video frame (pix/frame)
+                        'inst_speed' - numpy array of instantaneous speed (mm/s)
                         'rip_evt'- numpy array of ripple event times (sec) relative to stim train onset
                         'session_start_time' - scalar; session start time of the trial
         elec_sel_meth: str, should be one of 'avg' or'random'
     Outputs:
         cgroup_data: list(of length nMice) of dict('animal_id','args','trial_data') where
                     trial_data is a list (of length nTrials) of
-                    dict('rel_mt','mx','my','head_disp','bin_cen_t','rip_cnt')
+                    dict('rel_mt','mx','my','inst_speed','bin_cen_t','rip_cnt')
     """
     cgroup_data = []
     args = group_data[0][0]['args']
@@ -291,11 +291,12 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
     bin_edges, bin_cen = utp.create_psth_bins(args.xmin, args.xmax, bw)
     # Loop through each mouse
     for iMouse, md in enumerate(group_data):
-        # To find out how many recording sessions were there for this mouse:
-        sess_starts = [md[i]['rdata'][0]['session_start_time']
-                       for i in range(len(md))]
-        nMouseChan = len(sess_starts)
-        unique_starts = np.unique(sess_starts)
+        # Find out how many recording sessions were there for this mouse:       
+        all_sess_starts = []
+        for chd in md:
+            all_sess_starts.append([rd['session_start_time'] for rd in chd['rdata']])
+        unique_starts = np.unique(list(chain(*all_sess_starts)))
+        nMouseChan = len(md)
         # Go through each unique recording session and average each trial data
         # across the channels of that session
         all_trial_data = []
@@ -328,8 +329,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
                         for iSessChan in range(sess_n_chan):
                             evt_t = sess_chan_data[iSessChan][iTrial]['rip_evt']
                             # Bin the event times
-                            hdata[iSessChan, :], _ = np.histogram(
-                                evt_t, bin_edges)
+                            hdata[iSessChan, :], _ = np.histogram(evt_t, bin_edges)
                         # Collapse (average) across channels
                         rip_cnt = np.mean(hdata, axis=0)
                     case _:
@@ -339,7 +339,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth):
                 # except that there will be only one collapsed channel now.
                 # Build trial data structure as a dict
                 one_trial_data = {'rel_mt': cdata['rel_mt'], 'mx': cdata['mx'],
-                                  'my': cdata['my'], 'head_disp': cdata['head_disp'],
+                                  'my': cdata['my'], 'inst_speed': cdata['inst_speed'],
                                   'rip_cnt': rip_cnt,
                                   'session_start_time': cdata['session_start_time']}
                 # This list will accumulate trials of all sessions of the
@@ -980,7 +980,6 @@ def pool_head_mov_across_mice(group_data, within_mouse_operator):
         else:
             raise ValueError(
                 'within_mouse_operator should be "mean" or "median"')
-
         all_rr_list.append(mi_cen)
 
     # Make sure all mice have the same time base
@@ -989,3 +988,80 @@ def pool_head_mov_across_mice(group_data, within_mouse_operator):
     all_rr = np.array(all_rri_list)
 
     return t_bin_cen, all_rr
+
+def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None, 
+                                                 rel_time_win=None, qval=1.00):
+    """ For assessing the correlation between head movement speed and ripple rate
+    at the trial by trial level, we will create a dataframe with relevant info
+    Inputs:
+        group_data - output from collapse_rip_events_across_chan_for_each_trial(...) 
+        stats_data - output from create_data.pute_and_save_statistics(...). Not
+                    needed if rel_time_win is specified (i.e., not set to None)
+        rel_time_win - 2 element list; window start and end times (s) relative
+                        to stimulus onset; if None, the time window during which
+                        significant ripple modulation was found
+    Outputs:
+        df - dataframe; data in long format; each row is a trial; columns are
+            mouse_id, trial_num, inst_speed, and rip_rate
+    """
+    
+    if rel_time_win is None:
+        smt = stats_data['sig_mod_times']
+        rel_time_win = [min(smt), max(smt)];  
+     
+    animal_id, inst_speed, rip_rate, rip_cnt, baseline_rate = [],[],[],[],[]
+    trial_num = []
+    for mouse_num, md in enumerate(group_data): # mouse
+        bw = md['args'].bin_width # msec
+        rip_bin_cen_t = md['bin_cen_t'] # for ripple counts
+        iTrial = 0
+        for td in md['trial_data']:
+            # Convert to ripples/sec
+            rr = td['rip_cnt']*(1000/bw) # Used 1000 ms because bw is in ms
+            # Skip trial if no ripples were found in the baseline period
+            if ~np.all(rr[rip_bin_cen_t < 0]==0):
+                trial_num.append(iTrial)
+                iTrial += 1
+                b_rate = np.mean(rr[rip_bin_cen_t < 0])
+                # motion bin center times
+                mbw = np.diff(td['rel_mt'][0:2]) # in sec
+                mov_bin_cen = td['rel_mt'][0:-1]+mbw/2
+                sel_mv_t = (mov_bin_cen >= rel_time_win[0]) & \
+                                        (mov_bin_cen <= rel_time_win[1])
+                sel_inst_speed = td['inst_speed'][sel_mv_t] # mm/s
+                mean_inst_speed = np.mean(sel_inst_speed)
+                # Accumulate animal id
+                animal_id.append(md['animal_id'])
+                inst_speed.append(mean_inst_speed)
+                sel_rip_t = (rip_bin_cen_t >= rel_time_win[0]) & \
+                                           (rip_bin_cen_t <= rel_time_win[1])
+                sel_rip_rate = rr[sel_rip_t]
+                norm_rip_rate = 100 * np.mean(sel_rip_rate)/b_rate
+                rip_rate.append(norm_rip_rate)
+                baseline_rate.append(b_rate)
+                rip_cnt.append(np.sum(td['rip_cnt'][sel_rip_t]))
+        print(f'Done with mouse {mouse_num}')
+        # Convert to data frame
+    
+    # Remove outliers
+    animal_id = np.array(animal_id)
+    inst_speed = np.array(inst_speed)
+    rip_rate = np.array(rip_rate)
+    baseline_rate = np.array(baseline_rate)
+    rip_cnt = np.array(rip_cnt)
+    trial_num = np.array(trial_num)
+    
+    qx = np.quantile(inst_speed, qval)
+    qy = np.quantile(rip_rate, qval)
+    
+    sel_x = inst_speed < qx
+    sel_y = rip_rate < qy
+    sel = sel_x & sel_y    
+    
+    df = pd.DataFrame(dict(animal_id=animal_id[sel], 
+                           trial_num = trial_num[sel],
+                           inst_speed=inst_speed[sel],
+                           rip_rate=rip_rate[sel], 
+                           baseline_rate=baseline_rate[sel],
+                           rip_count=rip_cnt[sel]))
+    return df

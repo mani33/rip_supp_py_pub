@@ -104,7 +104,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
         match mov_metric:  # noqa
             case 'inst_speed':
                 mov_data = v['inst_speed']
-                ylabel = 'Instantaneous head speed (mm/s)'
+                ylabel = 'Photostimulation trial'
             case 'disp':
                 mov_data = v['disp']
                 ylabel = 'Instantaneous head displacement (pix)'
@@ -120,7 +120,15 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
     change_raster_yticklab_0_to_1(hdax, c+2)
     # Add a ytick label for the last trial
     add_yticklab_for_last_trial(hdax, c-1)
-
+    # Add scale bar 0.1 m/s and 1 sec
+    # Currently each unit on the y-axis is 20 mm (if )
+    scalebar_x, scalebar_y = 1, 100 # sec, mm/s
+    one_y_unit = 1/sf
+    sy = scalebar_y/one_y_unit
+    hdax.plot(np.array([0,scalebar_x])+5, [c-sy,c-sy], color='k', linewidth=1)
+    hdax.plot(np.array([0,0])+5, [c-sy,c], color='k', linewidth=1)
+    
+    
 
 def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[]):
     """
@@ -167,7 +175,7 @@ def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[]):
     if len(ylim) == 2:
         dax.set_ylim(ylim)
     dax.set_xlabel('Time (s) relative to photostimulation onset')
-    dax.set_ylabel('Inst speed (mm/s)')
+    dax.set_ylabel('Instantaneous\nhead speed (mm/s)')
 
 
 def plot_ripples_hist(rdata, args, hax):
@@ -289,7 +297,8 @@ def plot_ripples_one_session(session_ts, chan_num, pulse_per_train, std, minwidt
     plot_lightpulse_ripple_modulation(rdata, args)
 
 
-def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
+def plot_lightpulse_ripple_modulation(rdata, args, plot_light_pulses=True, 
+                                      show_title=True, fig_size=None, **kwargs):
     """ Plot ripple data when a pulse or train of pulses of light was given
     Inputs: 
         rdata, args = rip_data_processing.get_processed_rip_data(...)
@@ -302,8 +311,9 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
     if 'fig_num' not in kwargs:
         args.fig_num = None
 
-    fig = plt.figure(num=args.fig_num, figsize=(
-        11.15, 6.15), dpi=150, tight_layout=True)
+    if fig_size is None:
+        fig_size = (11.15, 6.15)
+    fig = plt.figure(num=args.fig_num, figsize=fig_size, dpi=150, tight_layout=True)
 
     # All plot beautification params such as tick label size, spine linewidth etc
     set_common_subplot_params(plt)
@@ -337,8 +347,9 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
         pulse_width = args.pulse_width
         pulse_freq = args.pulse_freq    
      
-    plot_light_pulses(pulse_width, pulse_per_train,
-                      pulse_freq, args.laser_color, ax[0])
+    if plot_light_pulses:
+        plot_light_pulses(pulse_width, pulse_per_train,
+                          pulse_freq, args.laser_color, ax[0])
     # Histogram of ripples
     plot_ripples_hist(rdata, args, ax[1])
 
@@ -353,11 +364,13 @@ def plot_lightpulse_ripple_modulation(rdata, args, **kwargs):
 
     # Plot head dispacement trial by trial
     plot_head_mov_by_trial(rdata, args, ax[3])
-    plot_light_pulses(pulse_width, pulse_per_train,
-                      pulse_freq, args.laser_color, ax[3])
+    if plot_light_pulses:
+        plot_light_pulses(pulse_width, pulse_per_train,
+                          pulse_freq, args.laser_color, ax[3])
 
     # Title
-    add_sup_title(args, fig)
+    if show_title:
+        add_sup_title(args, fig)
 
     plt.show()
 
