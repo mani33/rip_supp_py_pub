@@ -78,7 +78,8 @@ def change_raster_yticklab_0_to_1(rax, ymax):
     rax.set_yticklabels(ytlabels[pos_ticks].astype(int))
 
 
-def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
+def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed',
+                           scaling_fac=1/20):
     # Plot individual trial head displacement data
     """
     Inputs: 
@@ -86,7 +87,8 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
         hdax - axis handle on which to plot data
         mov_metric - 'disp' or 'inst_speed'; We will plot instantaneous speed (mm/s) 
                     by default. If 'disp', instantaneous displacement in 
-                    pixels will be plotted.        
+                    pixels will be plotted.
+        scaling_fac - scaling factor for motion
     Outputs:
         None
     """
@@ -95,7 +97,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed'):
         hdax = plt.gca()
         
     c = 1
-    sf = 1/20  # scaling factor to reduce clutter in the plot    
+    sf = scaling_fac  # scaling factor to reduce clutter in the plot    
     for v in rdata:
         # Get bin centers for rel_mt since head_disp was computed from two
         # adjacent frames

@@ -185,7 +185,7 @@ def collect_mouse_group_rip_data(data_sessions, args):
             # Find which sessions had this channel
             sel_keys, std, minwidth, pp_train = [], [], [], []
             # Some channels may not be in all sessions
-            sel_key_ind = np.zeros(len(mouse_keys), dtype=bool)
+            sel_key_ind = np.full(len(mouse_keys), False)
             for iKey, sess_key in enumerate(mouse_keys):
                 chan_str_list = re.findall(r'(\d+)',str(mouse_dd.iloc[iKey, :]['chan']))
                 chans_of_ikey = [int(x) for x in chan_str_list]
@@ -572,7 +572,7 @@ def filter_trials_by_beh_state(tr_on, tr_off, beh_state, key):
     Inputs:
         tr_on and tr_off  - numpy arrays of photostim train on and off times
         beh_state - string, should be 'awake','nrem','rem' or 'all'
-        key - database key, a dict
+        key - database key, a dict        
     Outputs:
         good_trials_beh - numpy array of boolean, with True indicating if a given
                           photostim trial was within the given behavioral state.
@@ -581,12 +581,17 @@ def filter_trials_by_beh_state(tr_on, tr_off, beh_state, key):
 
     # First get the behavior state segment on and off times
     if beh_state == 'awake':
-        st1, st2 = (cont.AwakeSegManual & key).fetch('seg_begin', 'seg_end')
-        st1 = st1[0][0]
-        st2 = st2[0][0]
-        ephys_start, ephys_end = (acq.Ephys & key).fetch(
+        # st1, st2 = (cont.AwakeSegManual & key).fetch('seg_begin', 'seg_end')
+        # st1 = st1[0][0]
+        # st2 = st2[0][0]
+        st1, st2 = (cont.SleepAuto & key).fetch1('sleep_trans_begin', 
+                                                'sleep_trans_end')
+        ephys_start, ephys_end = (acq.Ephys & key).fetch1(
             'ephys_start_time', 'ephys_stop_time')
-
+        if np.all(np.isnan(st1)):
+            st1,st2 = [[]],[[]]
+        t1 = np.array(list(chain([ephys_start],st2[0])))
+        t2 = np.array(list(chain(st1[0],[ephys_end])))
     elif beh_state == 'nrem':
         t1, t2 = (cont.SleepAuto & key).fetch('nrem_seg_begin', 'nrem_seg_end')
         # t1, t2 = (cont.NremSegManual & key).fetch('seg_begin','seg_end')
@@ -607,14 +612,12 @@ def filter_trials_by_beh_state(tr_on, tr_off, beh_state, key):
                          f'should be one of "awake","rem","nrem" or "all"')
 
     # Mark as True if a given photostim train is within any of the behavioral state segments
-    for i_train, cton in enumerate(tr_on):
-        ctoff = tr_off[i_train]
+    for i_train, (cton, ctoff) in enumerate(zip(tr_on, tr_off)):        
         # Take on and off times of each train. If train is inside any one of the NREM
-        # segment, it's a good trial.
-        inseg = np.full((t1.size,), False)
-        for idx, st1 in enumerate(t1):
-            st2 = t2[idx]
-            if (cton >= st1) & (ctoff < st2):
+        # segment, it's a good trial.       
+        inseg = np.full(t1.size, False)
+        for idx, (seg_t1, seg_t2) in enumerate(zip(t1,t2)):
+            if (cton >= seg_t1) & (ctoff < seg_t2):
                 inseg[idx] = True
         if any(inseg):
             good_trials_beh[i_train] = True
@@ -800,8 +803,8 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args_in,debug=F
         rel_mt = center_and_scale_time(mt, tr_on)
 
         # Mark (True/False) trials by their presence inside given behavioral state (e.g NREM)
-        good_trials_beh = filter_trials_by_beh_state(
-            tr_on, tr_off, args.beh_state, key)
+        good_trials_beh = filter_trials_by_beh_state(tr_on, tr_off, 
+                                                     args.beh_state, key)
 
         # Combine all selections and re-filter event times and trial data
         good_trials = good_trials_len & good_trials_beh
@@ -990,7 +993,8 @@ def pool_head_mov_across_mice(group_data, within_mouse_operator):
     return t_bin_cen, all_rr
 
 def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None, 
-                                                 rel_time_win=None, qval=1.00):
+                                                 rel_time_win=None, qval=1.00,
+                                                 normalize_motion=False):
     """ For assessing the correlation between head movement speed and ripple rate
     at the trial by trial level, we will create a dataframe with relevant info
     Inputs:
@@ -1000,6 +1004,9 @@ def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None,
         rel_time_win - 2 element list; window start and end times (s) relative
                         to stimulus onset; if None, the time window during which
                         significant ripple modulation was found
+        q_val - upper threshold for instantaneuous speed for outlier removal
+        normalize_motion - if True, normalize (%) post-stim motion by t
+                        rial-averaged baseline motion
     Outputs:
         df - dataframe; data in long format; each row is a trial; columns are
             mouse_id, trial_num, inst_speed, and rip_rate
@@ -1010,11 +1017,15 @@ def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None,
         rel_time_win = [min(smt), max(smt)];  
      
     animal_id, inst_speed, rip_rate, rip_cnt, baseline_rate = [],[],[],[],[]
-    trial_num = []
+    mouse_baseline_inst_speed = []
+    trial_num = [] # For each mouse, give sequential numbers starting from 0 to
+    # be able to use mouse-specific random offsets in mixed model analysis
     for mouse_num, md in enumerate(group_data): # mouse
         bw = md['args'].bin_width # msec
         rip_bin_cen_t = md['bin_cen_t'] # for ripple counts
         iTrial = 0
+        baseline_inst_speed = []
+        imouse_inst_speed = []
         for td in md['trial_data']:
             # Convert to ripples/sec
             rr = td['rip_cnt']*(1000/bw) # Used 1000 ms because bw is in ms
@@ -1030,9 +1041,12 @@ def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None,
                                         (mov_bin_cen <= rel_time_win[1])
                 sel_inst_speed = td['inst_speed'][sel_mv_t] # mm/s
                 mean_inst_speed = np.mean(sel_inst_speed)
+                # Accumulate baseline inst speed to compute an overall average
+                # for normalizing post-stim motion later
+                baseline_inst_speed.append(np.mean(td['inst_speed'][mov_bin_cen < 0]))
                 # Accumulate animal id
                 animal_id.append(md['animal_id'])
-                inst_speed.append(mean_inst_speed)
+                imouse_inst_speed.append(mean_inst_speed)
                 sel_rip_t = (rip_bin_cen_t >= rel_time_win[0]) & \
                                            (rip_bin_cen_t <= rel_time_win[1])
                 sel_rip_rate = rr[sel_rip_t]
@@ -1040,12 +1054,20 @@ def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None,
                 rip_rate.append(norm_rip_rate)
                 baseline_rate.append(b_rate)
                 rip_cnt.append(np.sum(td['rip_cnt'][sel_rip_t]))
+        # Average across all trials and and time period
+        mean_baseline_inst_speed = np.mean(baseline_inst_speed)
+        mouse_baseline_inst_speed.append(mean_baseline_inst_speed)
+        if normalize_motion:
+            imouse_inst_speed = [100*x/mean_baseline_inst_speed for x in imouse_inst_speed]
+        inst_speed.append(imouse_inst_speed)
+        
         print(f'Done with mouse {mouse_num}')
         # Convert to data frame
-    
+    baseline_mov_df = pd.DataFrame(dict(animal_id=[md['animal_id'] for md in group_data],
+                                        baseline_inst_speed=mouse_baseline_inst_speed))
     # Remove outliers
     animal_id = np.array(animal_id)
-    inst_speed = np.array(inst_speed)
+    inst_speed = np.array(list(chain(*inst_speed)))
     rip_rate = np.array(rip_rate)
     baseline_rate = np.array(baseline_rate)
     rip_cnt = np.array(rip_cnt)
@@ -1064,4 +1086,5 @@ def get_motion_vs_rip_rate_corr_data(group_data, stats_data=None,
                            rip_rate=rip_rate[sel], 
                            baseline_rate=baseline_rate[sel],
                            rip_count=rip_cnt[sel]))
-    return df
+    
+    return df, baseline_mov_df
