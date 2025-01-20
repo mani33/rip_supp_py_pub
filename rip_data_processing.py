@@ -198,12 +198,14 @@ def collect_mouse_group_rip_data(data_sessions, args):
                     # Save index
                     sel_key_ind[iKey] = True
             rdata, args_out = get_processed_rip_data(sel_keys, pp_train, std,
-                                                 minwidth, args)
-            # ============ Exclude sessions having low ripple rate ============
-            rdata, good_sess, good_sess_start_times = \
-                                    remove_sess_with_low_rip_rate(rdata, args)
-            # ============ Exclude sessions having low ripple rate ============
-                       
+                                                 minwidth, args)            
+            if args.beh_state=='nrem':
+                # ============ Exclude sessions having low ripple rate ============
+                rdata, good_sess, good_sess_start_times = \
+                                        remove_sess_with_low_rip_rate(rdata, args) 
+            else:
+                good_sess = np.full(len(sel_keys), True)
+                
             animal_id = mouse_keys[0]['animal_id']
             if len(rdata) > 0:               
                 # Add useful info to args_out
@@ -368,27 +370,48 @@ def convert_motion_traj_to_inst_disp(px, py):
     # To avoid loading everytime, I have hard-coded these numbers here. If you
     # change the video calibration info, these numbers should be updated
     # accordingly.
-    fps = 29.97
-    mm_per_pix_x = 0.47047365470852015
-    b = np.array([3.93429543e+02, -7.32063842e-02])
-    # dt = np.median(np.diff(t)) # should be close to 1/29.97
-    cage_width_mm = 180
+    fps = 29.97   
     dx = np.diff(px)
     dy = np.diff(py)
     # Get the mid point of consecutive px values to get the
     # y scaling factor corresponding to x values
-    x = (px[0:-1] + px[1:])/2
+    x_mid = (px[0:-1] + px[1:])/2   
+    dx_mm, dy_mm = convert_pix_dist_to_mm(x_mid, dx, dy)
+    d = np.sqrt((dx_mm**2)+(dy_mm**2))
+    
+    return d, fps
+
+def convert_pix_dist_to_mm(avg_loc_x_pix, dx_pix, dy_pix):
+    """Convert x and y distances in pixels to mm
+     Inputs:
+        avg_loc_x_pix -  mid point of consecutive x values from which dx_pix was
+            computed. This is needed to get the y scaling factor which changes as
+            a function x coordinate
+        dx_pix - x distance in pixels. Can be a 1d numpy array or a number
+        dy_pix - y distance in pixels.  Can be a 1d numpy array or a number
+     Outputs:
+         dx_mm - x distance in mm. Same shape as dx_pix
+         dy_mm - y distance in mm. Same shape as dy_pix
+         
+     The constants used here were taken from the file:
+     r'C:/Users/maniv/Documents/ripples_manuscript/data/video_size_calibration.pkl'
+     To avoid loading everytime, I have hard-coded these numbers here. If you
+     change the video calibration info, these numbers should be updated
+     accordingly."""
+     
+    mm_per_pix_x = 0.47047365470852015
+    b = np.array([3.93429543e+02, -7.32063842e-02])
+    cage_width_mm = 180   
+   
     # Scale dx and dy according to video calibration
-    dx_mm = dx*mm_per_pix_x
+    dx_mm = dx_pix * mm_per_pix_x
     # Because the pixel to mm conversion factor changes as a function of
     # x (due to video camera angle), we need to compute this factor for
     # all x in our trial.
-    mm_per_pix_y = cage_width_mm/(b[0]+b[1]*x)
-    dy_mm = dy*mm_per_pix_y
-    d = np.sqrt((dx_mm**2)+(dy_mm**2))
-
-    return d, fps
-
+    mm_per_pix_y = cage_width_mm/(b[0]+b[1] * avg_loc_x_pix)
+    dy_mm = dy_pix * mm_per_pix_y
+    
+    return dx_mm, dy_mm
 
 def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
                                                                   debug=False):
@@ -430,7 +453,6 @@ def correct_abnorm_high_mov_artifacts(rdata,args,art_peak_hw_ratio_th=7,
     
     # if rdata[0]['session_start_time']==5315118162:
     #     rdpl.plot_head_mov_by_trial(rdata, args)
-        
     for iTrial, rd in enumerate(rdata):
         d = rd['head_disp']
         inst_speed = rd['inst_speed']
@@ -856,6 +878,9 @@ def get_processed_rip_data(keys, pulse_per_train, std, minwidth, args_in,debug=F
                                 debug=debug)
         rdata = [rdata[i]
                  for i in np.nonzero(art_dur < args.max_art_duration)[0]]
+    else: # Add dummy art_idx key to rdata dict to be consistent with above
+        for rd in rdata:
+            rd['art_idx'] = np.full(rd['inst_speed'].size, False)
 
     if not np.unique(all_pulse_freq).size == np.unique(all_pulse_width).size == 1:
         print('**************************************************************')

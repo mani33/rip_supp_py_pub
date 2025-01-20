@@ -79,7 +79,7 @@ def change_raster_yticklab_0_to_1(rax, ymax):
 
 
 def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed',
-                           scaling_fac=1/20):
+                           scaling_fac=1/20, scalebar_x=1, scalebar_y=100):
     # Plot individual trial head displacement data
     """
     Inputs: 
@@ -89,6 +89,8 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed',
                     by default. If 'disp', instantaneous displacement in 
                     pixels will be plotted.
         scaling_fac - scaling factor for motion
+        scalebar_x - scale bar for x axis (sec)
+        scalebar_y - scale bar for y axis (mm/s)
     Outputs:
         None
     """
@@ -122,9 +124,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed',
     change_raster_yticklab_0_to_1(hdax, c+2)
     # Add a ytick label for the last trial
     add_yticklab_for_last_trial(hdax, c-1)
-    # Add scale bar 0.1 m/s and 1 sec
-    # Currently each unit on the y-axis is 20 mm (if )
-    scalebar_x, scalebar_y = 1, 100 # sec, mm/s
+    # Add scale bar 
     one_y_unit = 1/sf
     sy = scalebar_y/one_y_unit
     hdax.plot(np.array([0,scalebar_x])+5, [c-sy,c-sy], color='k', linewidth=1)
