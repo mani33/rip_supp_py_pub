@@ -15,16 +15,17 @@ import cont as cont
 import ripples as ripples
 import general_functions as gfun
 import djutils as dju
-import util_py as utp
+import util_py as utpy
 import copy
 import scipy.signal as sig
 import re
+import os
 import pandas as pd
 import matplotlib.pyplot as plt
+import neuralynx_io as nio
 
 #%% Functions
 # Class for default values of parameters
-
 class Args():
     def __init__(self):
         # Data length pre and post light pulse
@@ -55,7 +56,36 @@ class Args():
         self.baseline_rip_rate_th = 0.2
 
 # main function that calls other functions
-
+def get_raw_traces(data_filename, mouse_id, chan_num):
+    ch_map = ['t1c1','t1c2','t1c3','t1c4','t2c1','t2c2']
+    ch_name = ch_map[chan_num]
+    d = utpy.get_pickled_data(data_filename)
+    mouse_data = [x for x in d if x[0]['animal_id']==mouse_id][0]
+    ch_data = [x for x in mouse_data if x['chan_num']==chan_num][0]
+    rdata = ch_data['rdata']
+    ax_size = [2.7,0.4]
+    fig, ax = utpy.make_axes(plt, ax_size)
+    fac = 100
+    sess_times = [x['session_start_time'] for x in rdata]
+    u_sess_times = np.unique(sess_times)
+    sdata = dict()
+    down_fac = 10
+    for ust in u_sess_times:        
+        dfold = dju.get_sess_str(ust)
+        file_path = os.path.join(r'D:\ephys\raw', dfold, f'{ch_name}.ncs')
+        hf = nio.load_ncs(file_path)
+        sdata.update({ust: hf})
+    raw = []
+    for i_trial, td in enumerate(rdata):
+        hf = sdata[td['session_start_time']]
+        sel = (hf['time'] > (td['train_onset']-(4*1e6))) & (hf['time'] <= (td['train_onset']+(6*1e6)))
+        dd = (hf['data'][sel])
+        raw.append(dd)
+        tr0 = float(td['train_onset'])
+        t = ((hf['time'][sel]).astype(float)-tr0)
+        t = t[::down_fac]*1e-6        
+        ax.plot(t,dd[::down_fac] + (i_trial*fac),color='k',linewidth=0.5)       
+    return raw
 
 def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     """
@@ -290,7 +320,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth='av
     cgroup_data = []
     args = group_data[0][0]['args']
     bw = args.bin_width/1000
-    bin_edges, bin_cen = utp.create_psth_bins(args.xmin, args.xmax, bw)
+    bin_edges, bin_cen = utpy.create_psth_bins(args.xmin, args.xmax, bw)
     # Loop through each mouse
     for iMouse, md in enumerate(group_data):
         # Find out how many recording sessions were there for this mouse:       
@@ -930,7 +960,7 @@ def get_ripple_rate(rdata, bin_width, xmin, xmax):
     evt = np.concatenate([v['rip_evt'] for v in rdata])
     # Create binedges
     bw = bin_width/1000
-    bin_edges, bin_cen = utp.create_psth_bins(xmin, xmax, bw)
+    bin_edges, bin_cen = utpy.create_psth_bins(xmin, xmax, bw)
     # Get histogram counts
     counts, _ = np.histogram(evt, bin_edges)
     n_trials = len(rdata)

@@ -194,9 +194,9 @@ def plot_ripples_hist(rdata, args, hax):
         rdata, args.bin_width, args.xmin, args.xmax)
     hax.hist(bins[:-1], bins,  weights=rip_rate, color='k', rwidth=1)
     # Mark the baseline mean
-    bm = np.mean(rip_rate[bins[:-1]<0])    
+    # bm = np.mean(rip_rate[bins[:-1]<0])    
     hax.set_xlim([args.xmin, args.xmax])
-    hax.scatter(hax.get_xlim()[0],bm,s=12,c='r')
+    # hax.scatter(hax.get_xlim()[0],bm,s=12,c='r')
     hax.set_xlabel('Time (s) relative to photostimulation onset')
     hax.set_ylabel('Ripples/s')
 
@@ -299,7 +299,7 @@ def plot_ripples_one_session(session_ts, chan_num, pulse_per_train, std, minwidt
     plot_lightpulse_ripple_modulation(rdata, args)
 
 
-def plot_lightpulse_ripple_modulation(rdata, args, plot_light_pulses=True, 
+def plot_lightpulse_ripple_modulation(rdata, args, show_light_pulses=True, 
                                       show_title=True, fig_size=None, **kwargs):
     """ Plot ripple data when a pulse or train of pulses of light was given
     Inputs: 
@@ -349,7 +349,7 @@ def plot_lightpulse_ripple_modulation(rdata, args, plot_light_pulses=True,
         pulse_width = args.pulse_width
         pulse_freq = args.pulse_freq    
      
-    if plot_light_pulses:
+    if show_light_pulses:
         plot_light_pulses(pulse_width, pulse_per_train,
                           pulse_freq, args.laser_color, ax[0])
     # Histogram of ripples

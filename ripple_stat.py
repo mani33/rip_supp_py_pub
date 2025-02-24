@@ -32,6 +32,10 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
     Outputs:
         sig_mod_times_imouse - dict(animal_id:1d numpy array)-significant modulation 
                                 times for each mouse
+        pval -  dict(animal_id:1d array): p-values of significantly modulated clusters. 
+                Note that the size of this array will not generally match that of 
+                sig_mod_times since each cluster could contain more than one
+                data point.
     """
     #--------------------------------------------------------------------------
     # Find signicantly modulated times for each mouse
@@ -48,7 +52,8 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
             grdata = [md[0] for md in group_data]
     
     # Go through each mouse and get the times of significant modulation
-    sig_mod_times_imouse = {} # for individual mouse statistics  
+    sig_mod_times_imouse = {} # for individual mouse statistics 
+    pval = {} # p-values of significantly modulated clusters
     for iMouse,md in enumerate(grdata):
         mouse_id = md['animal_id']
         args = md['args']
@@ -92,14 +97,14 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
                 # Change list into 2d array (nTrials-by-nTime points)
                 data = np.array(inst_speed)        
         # Get significant modulation times
-        smi = cmt.cluster_mass_test(bin_cen_t,data,stat_test,
+        smi, pval_i = cmt.cluster_mass_test(bin_cen_t,data,stat_test,
                                     nBoot=nBoot)    
         # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
         # significantly modulated        
         smt = bin_cen_t[smi]
         sig_mod_times_imouse.update({mouse_id:smt})   
-    
-    return sig_mod_times_imouse
+        pval.update({mouse_id:pval_i})
+    return sig_mod_times_imouse, pval
 
 def get_sig_mod_times_for_mouse_population(group_data,stat_test,
                                            nBoot,data_type,elec_sel_meth=None):
@@ -117,6 +122,10 @@ def get_sig_mod_times_for_mouse_population(group_data,stat_test,
     Outputs:        
         sig_mod_times - 1d numpy array of bin_cen_t of clusters that are 
                         significantly modulated when doing mouse-level statistics
+        pval -  1d array of p-values of significantly modulated clusters. Note
+                that the size of this array will not generally match that of 
+                sig_mod_times since each cluster could contain more than one
+                data point.
     """
 
     # Perform statistical test on mouse-level, meaning, for each mouse, we first
@@ -160,12 +169,12 @@ def get_sig_mod_times_for_mouse_population(group_data,stat_test,
             
     # mdata is 2D numpy array, nMice-by-nTimeBins of ripple rates or inst_speed
     # bin_cen_t - 1D numpy array of bin-center time in sec.
-    smi = cmt.cluster_mass_test(bin_cen_t,mdata,stat_test,nBoot=nBoot)
+    smi, pval = cmt.cluster_mass_test(bin_cen_t,mdata,stat_test,nBoot=nBoot)
     # smi: 1d numpy array of bin_cen_t-indices of clusters that are 
     # significantly modulated
     sig_mod_times = bin_cen_t[smi]
     
-    return sig_mod_times
+    return sig_mod_times, pval
 
 def create_symmetric_bin_center_t(t_len,bin_width):
     # Create a bin center time vector containing equal number of positive and 
