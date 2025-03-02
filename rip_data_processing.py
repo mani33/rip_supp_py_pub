@@ -23,6 +23,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import neuralynx_io as nio
+import scipy
 
 #%% Functions
 # Class for default values of parameters
@@ -56,36 +57,207 @@ class Args():
         self.baseline_rip_rate_th = 0.2
 
 # main function that calls other functions
-def get_raw_traces(data_filename, mouse_id, chan_num):
-    ch_map = ['t1c1','t1c2','t1c3','t1c4','t2c1','t2c2']
+def get_raw_traces(data_filename, t_pre, t_post, dec_factors=None, 
+                                                   plot=False, t_pad=0):
+    """ Get raw traces optionally decimated for each channel of each mouse
+    Inputs:
+        data_filename - filename of rocessed data containing all ripple and 
+                        motion related data       
+        t_pre - time (must be a negative number: like -4) in sec before light
+                pulse train onset
+        t_post - time (must be a positive number: like 6) in sec after light
+                pulse train onset
+        dec_factors - list of decimation factors; e.g., [4,4,4,2]. If None, pure
+                  raw data will be returned
+        t_pad - buffer time at the beginning and end of the trial raw data to 
+                deal with decimation and convolution artifacts
+    Outputs:
+        raw - dict with keys fs(final sampling rate), t_pre, t_post, t_pad,
+              and data; data is list (len=n_mice) of lists(len=n_chan); 
+              inner list containing a dict with keys animal_id, chan_num, t, 
+              and trial_data; trial_data is a list (len=n_trials) of 
+              raw (or decimated) data traces corresponding to different trials
+    """
+    ch_map = ['t1c1','t1c2','t1c3','t1c4','t2c1','t2c2','t2c3','t2c4',
+              't3c1','t3c2','t3c3','t3c4','t4c1','t4c2','t4c3','t4c4']
+    data = utpy.get_pickled_data(data_filename)
+    ax_size = [2.7, 0.4]
+    scale_fac = 1000
+    fs = 32000 if dec_factors is None else 32000/np.prod(dec_factors)
+    raw = dict(fs=fs, t_pre=t_pre, t_post=t_post, t_pad=t_pad, data=[])
+    for md in data: 
+        chdata_temp = []
+        for chd in md:
+            chan_num = chd['chan_num']
+            ch_name = ch_map[chan_num]
+            rdata = chd['rdata']    
+            sess_times = [x['session_start_time'] for x in rdata]
+            u_sess_times = np.unique(sess_times)
+            sdata = dict()
+            down_fac = np.prod(dec_factors)
+            for ust in u_sess_times:
+                dfold = dju.get_sess_str(ust)
+                file_path = os.path.join(r'D:\ephys\raw', dfold, f'{ch_name}.ncs')
+                hf = nio.load_ncs(file_path)
+                sdata.update({ust: hf})            
+            if plot:
+                fig, ax = utpy.make_axes(plt, ax_size)
+            trdata_temp = []
+            for i_trial, td in enumerate(rdata):
+                print(i_trial)
+                hf = sdata[td['session_start_time']]
+                cond_pre = td['train_onset'] - ((abs(t_pre) + t_pad) * 1e6)
+                cond_post = td['train_onset'] + ((t_post + t_pad)*1e6)
+                sel = (hf['time'] > cond_pre) & (hf['time'] <= cond_post)
+                dd = hf['data'][sel]
+                if dec_factors is not None:
+                    for dec_fac in dec_factors:
+                        dd = sig.decimate(dd, dec_fac, ftype='fir')
+                tr0 = float(td['train_onset'])
+                t = ((hf['time'][sel]).astype(float)-tr0)
+                t = t[::down_fac]*1e-6               
+                trdata_temp.append(dd)
+                if plot:
+                    ax.plot(t, dd + (i_trial*scale_fac),color='k',linewidth=0.5)   
+                    
+            chdata_temp.append(dict(animal_id=chd['animal_id'], 
+                                    chan_num=chan_num, 
+                                    trial_data=trdata_temp,
+                                    t=t))
+            print(f'Done with mouse {chd["animal_id"]}, chan {chan_num}')
+        raw['data'].append(chdata_temp)
+        
+    return raw
+
+def get_spectrogram(data, fs, t_resol=0.05, fmax=None):
+    """ Compute spectrogram
+    Inputs:
+        data - list of time series of signals
+        fs - sampling rate (Hz)
+        t_resol - time resolution (s) of spectrogram
+        fmax - maximum analysis frequency for spectrogram
+    Outputs:
+        ps - list of 2d numpy arrays of spectrograms
+        f - analysis frequencies
+        t - time vector corresponding to the spectrogram
+    """
+    t_win = 1.5 # sec sliding window   
+    M = int(fs*t_win)
+    g_std = int(M/5)
+     
+    hop = int(t_resol * fs)
+    win = scipy.signal.windows.gaussian(M, g_std, sym=True)
+    sft = scipy.signal.ShortTimeFFT(win, hop, fs)
+    sel = slice(None) if fmax is None else sft.f <= fmax
+    Sxx = []
+    for d in data:        
+        Sx = abs(sft.stft(d))    
+        Sxx.append(Sx[sel,:])
+    f = sft.f[sel]
+    t = sft.t(len(d))
+    return Sxx, f, t
+
+def get_average_spectrogram(raw, fmax=None):
+    """ Compute spectrogram for each trial, average it across trials, then
+    average it across channels for each mouse. We will also remove any padding
+    of data used to mitigate edge artifacts
+    Inputs:
+        raw - output data from get_raw_trial_traces() function; it is a 
+                dict with keys fs(final sampling rate), t_pre, t_post, t_pad,
+                and data; data is list (len=n_mice) of lists(len=n_chan); 
+                inner list containing a dict with keys animal_id, chan_num, t, 
+                and trial_data; trial_data is a list (len=n_trials) of 
+                raw (or decimated) data traces corresponding to different trials
+        fmax - maximum of analysis frequency for spectrogram
+    Outputs:
+        sxx_data - dict with keys f (analysis frequency vector),t and data; 
+                data is a list (len=n_mice) of dicts with keys animal_id and sxx
+    """
+    sxx_data = dict(t_pre=raw['t_pre'], t_post=raw['t_post'], data = [])
+    tdr_params = (cont.TDratioParams()).fetch1()
+    for md in raw['data']: # mice
+        sxx_ch = []
+        for chd in md: # channels
+            sxx, f, t = get_spectrogram(chd['trial_data'], raw['fs'], fmax=fmax)          
+            # Adjust t output as spectrogram function assumed t=0 at the first 
+            # time-domain sample input
+            t = t - (abs(raw['t_pre']) + raw['t_pad'])
+            # it is assumed to start
+            sel = (t >= raw['t_pre']) & (t <= raw['t_post'])
+            # average across trials & remove padding if any
+            sxx = np.dstack(sxx).mean(axis=2)[:, sel]
+            sxx_ch.append(sxx)
+        # Average across channels 
+        sxx = np.dstack(sxx_ch).mean(axis=2)       
+        # Z-score across frequencies
+        sxx_zs = (sxx - np.mean(sxx, axis=0))/np.std(sxx, axis=0)        
+        # Theta/delta ratio
+        f_theta = (f >= tdr_params['theta_begin']) & (f <= tdr_params['theta_end'])
+        f_delta = (f >= tdr_params['delta_begin']) & (f <= tdr_params['delta_end'])
+        tdr = (sxx[f_theta,:].mean(axis=0))/(sxx[f_delta,:].mean(axis=0))
+        # Save
+        sxx_data['data'].append(dict(animal_id = chd['animal_id'],
+                                sxx=sxx, sxx_zs=sxx_zs, tdr=tdr))
+    sxx_data['f'] = f
+    sxx_data['t'] = t[sel]
+    
+    return sxx_data
+          
+def get_raw_traces_one_chan(data_filename, mouse_id, chan_num, t_pre, t_post, 
+                                       dec_factors=None, plot=False, t_pad=1):
+    """ Get raw traces optionally decimated
+    Inputs:
+        data_filename - filename of rocessed data containing all ripple and 
+                        motion related data
+        mouse_id - id of mouse
+        chan_num - channel number
+        t_pre - time (must be a negative number: like -4) in sec before light
+                pulse train onset
+        t_post - time (must be a positive number: like 6) in sec after light
+                pulse train onset
+        dec_factors - list of decimation factors; e.g., [4,4,4,2]. If None, pure
+                  raw data will be returned
+        t_pad - buffer time at the end of the trial raw data to deal with
+                    decimation artifact
+    """
+    ch_map = ['t1c1','t1c2','t1c3','t1c4','t2c1','t2c2','t2c3','t2c4']
     ch_name = ch_map[chan_num]
     d = utpy.get_pickled_data(data_filename)
     mouse_data = [x for x in d if x[0]['animal_id']==mouse_id][0]
     ch_data = [x for x in mouse_data if x['chan_num']==chan_num][0]
-    rdata = ch_data['rdata']
-    ax_size = [2.7,0.4]
-    fig, ax = utpy.make_axes(plt, ax_size)
-    fac = 100
+    rdata = ch_data['rdata']   
+    scale_fac = 1000
     sess_times = [x['session_start_time'] for x in rdata]
     u_sess_times = np.unique(sess_times)
     sdata = dict()
-    down_fac = 10
-    for ust in u_sess_times:        
+    down_fac = np.prod(dec_factors)
+    for ust in u_sess_times:
         dfold = dju.get_sess_str(ust)
         file_path = os.path.join(r'D:\ephys\raw', dfold, f'{ch_name}.ncs')
         hf = nio.load_ncs(file_path)
         sdata.update({ust: hf})
     raw = []
+    if plot:
+        ax_size = [2.7,0.4]
+        fig, ax = utpy.make_axes(plt, ax_size)
     for i_trial, td in enumerate(rdata):
         hf = sdata[td['session_start_time']]
-        sel = (hf['time'] > (td['train_onset']-(4*1e6))) & (hf['time'] <= (td['train_onset']+(6*1e6)))
-        dd = (hf['data'][sel])
-        raw.append(dd)
+        cond_pre = td['train_onset'] + (t_pre * 1e6)
+        cond_post = td['train_onset'] + ((t_post + t_pad)*1e6)
+        sel = (hf['time'] > cond_pre) & (hf['time'] <= cond_post)
+        dd = hf['data'][sel]
+        if dec_factors is not None:
+            for dec_fac in dec_factors:
+                dd = sig.decimate(dd, dec_fac, ftype='fir')
         tr0 = float(td['train_onset'])
         t = ((hf['time'][sel]).astype(float)-tr0)
-        t = t[::down_fac]*1e-6        
-        ax.plot(t,dd[::down_fac] + (i_trial*fac),color='k',linewidth=0.5)       
-    return raw
+        t = t[::down_fac]*1e-6
+        dd = dd[t <= t_post]
+        t = t[t <= t_post]
+        raw.append(dd)
+        if plot:
+            ax.plot(t, dd + (i_trial*scale_fac),color='k',linewidth=0.5)       
+    return raw, t
 
 def average_rip_rate_across_mice(group_data, elec_sel_meth, **kwargs):
     """
