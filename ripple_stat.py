@@ -39,63 +39,22 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
     """
     #--------------------------------------------------------------------------
     # Find signicantly modulated times for each mouse
-    match data_type:
-        case 'ripples':
-            grdata = rdp.collapse_rip_events_across_chan_for_each_trial(
-                                                    group_data,elec_sel_meth)    
-            # grdata: list(of length nMice) of dict('animal_id','args','bin_cen_t','trial_data') 
-            # where trial_data is a list (of length nTrials) of 
-            # dict('rel_mt','mx','my','head_disp','rip_cnt')
-        case 'inst_speed':
-            # All channels will have the same movement data. So we will pick the
-            # motion data from the first channel
-            grdata = [md[0] for md in group_data]
-    
+    grdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,
+                                                                elec_sel_meth)
     # Go through each mouse and get the times of significant modulation
     sig_mod_times_imouse = {} # for individual mouse statistics 
     pval = {} # p-values of significantly modulated clusters
     for iMouse,md in enumerate(grdata):
         mouse_id = md['animal_id']
-        args = md['args']
+        # Trim the right side end to match the length of pre-stim time
+        sel_t_bins = md['bin_cen_t'] <= np.abs(np.min(md['bin_cen_t']))        
         match data_type:
             case 'ripples':
-                # catenate trial data into a matrix
-                nTrials = len(md['trial_data'])
-                nBins = md['bin_cen_t'].size
-                trial_rip_cnt = np.zeros((nTrials,nBins))
-                for iTrial,td in enumerate(md['trial_data']):
-                    trial_rip_cnt[iTrial,:] = td['rip_cnt']
-                data = np.array([td['rip_cnt'] for td in md['trial_data']])
-                bin_cen_t = md['bin_cen_t']
+                # catenate trial data into a matrix               
+                data = np.array([td['rip_cnt'][sel_t_bins] for td in md['trial_data']])
+                bin_cen_t = md['bin_cen_t'][sel_t_bins]
             case 'inst_speed':                
-                """ Each trial will likely have different rel_mt as the frame
-                times will not be guaranteed to be identical for all trials.
-                Therefore, to keep a common time vector for all trials, and to 
-                have equal number of time bins before and after stimulus onset,
-                we will do the following:
-                """
-                # 1. Determine the latest minimum and the earliest maximum time 
-                # across all trials
-                tmin = np.max([x['rel_mt'][0] for x in md['rdata']])
-                tmax = np.min([x['rel_mt'][-1] for x in md['rdata']])
-                assert (-args.xmin)==args.xmax, 'xmin and xmax must be the same length'
-                # 2. Pick the smaller of the tmin and tmax abs values
-                tlen = np.min(np.abs([tmin,tmax]))
-                # 3. Create time vector
-                step = 1/args.fps
-                bin_cen_t = create_symmetric_bin_center_t(tlen,step)
-                # 4. We will pick inst_speed data corresponding to these points
-                # from each trial using interpolation
-                inst_speed = []
-                for d in md['rdata']:
-                    # Create bin centers for each trial
-                    bw = np.median(np.diff(d['rel_mt']))
-                    # The actual times matching inst_speed in this trial
-                    bct = d['rel_mt'][0:-1]+bw/2                    
-                    # Interpolate to get inst_speed at our desired time points
-                    inst_speed.append(np.interp(bin_cen_t,bct,d['inst_speed']))                    
-                # Change list into 2d array (nTrials-by-nTime points)
-                data = np.array(inst_speed)        
+                data, bin_cen_t = compute_across_chan_pooled_inst_speed(md)
         # Get significant modulation times
         smi, pval_i = cmt.cluster_mass_test(bin_cen_t,data,stat_test,
                                     nBoot=nBoot)    
@@ -106,6 +65,45 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
         pval.update({mouse_id:pval_i})
     return sig_mod_times_imouse, pval
 
+def compute_across_chan_pooled_inst_speed(mdata):
+    """ Pool all instantaneous speed data from all unique trials from all recorded
+      sessions of a given mouse
+      Inputs:
+        mdata - one element (one mouse) of the output list from the function call - 
+        rdp.collapse_rip_events_across_chan_for_each_trial(group_data,elec_sel_meth)
+      Outputs:
+          data - 2d numpy array (nTrials-by-nTime points) inst speed data
+    """
+          
+    """ Each trial will likely have different rel_mt as the frame
+    times will not be guaranteed to be identical for all trials.
+    Therefore, to keep a common time vector for all trials, and to 
+    have equal number of time bins before and after stimulus onset,
+    we will do the following:
+    """
+    # 1. Determine the latest minimum and the earliest maximum time 
+    # across all trials
+    tmin = np.max([x['rel_mt'][0] for x in mdata['trial_data']])              
+    # 2. Pick the smaller of the tmin abs values
+    tlen = np.abs(tmin)
+    # 3. Create time vector
+    step = 1/mdata['args'].fps
+    bin_cen_t = create_symmetric_bin_center_t(tlen,step)
+    # 4. We will pick inst_speed data corresponding to these points
+    # from each trial using interpolation
+    inst_speed = []
+    for d in mdata['trial_data']:
+        # Create bin centers for each trial
+        bw = np.median(np.diff(d['rel_mt']))
+        # The actual times matching inst_speed in this trial
+        bct = d['rel_mt'][0:-1]+bw/2                    
+        # Interpolate to get inst_speed at our desired time points
+        inst_speed.append(np.interp(bin_cen_t,bct,d['inst_speed']))                    
+    # Change list into 2d array (nTrials-by-nTime points)
+    data = np.array(inst_speed)
+    
+    return data, bin_cen_t
+       
 def get_sig_mod_times_for_mouse_population(group_data,stat_test,
                                            nBoot,data_type,elec_sel_meth=None):
     """ For the entire mouse population, compute significance of modulation at 
@@ -135,37 +133,21 @@ def get_sig_mod_times_for_mouse_population(group_data,stat_test,
         case 'ripples':
             bin_cen_t,_,_,mdata = rdp.average_rip_rate_across_mice(group_data,
                                                                 elec_sel_meth)
+            # Trim the right side end to match the length of pre-stim time
+            sel_t_bins = bin_cen_t <= np.abs(np.min(bin_cen_t))
+            bin_cen_t = bin_cen_t[sel_t_bins]
+            mdata = mdata[:, sel_t_bins]
         case 'inst_speed':
-            # 1. Create time vector: determine the latest minimum and the 
-            # earliest maximum time across all trials and all mice
-            t1 = [[td['rel_mt'][0] for td in gd[0]['rdata']] for gd in group_data]
-            t1 = np.max(np.concatenate(t1))
-            t2 = [[td['rel_mt'][-1] for td in gd[0]['rdata']] for gd in group_data]
-            t2 = np.min(np.concatenate(t2))
-            tlen = np.min(np.abs([t1,t2]))
-            args = group_data[0][0]['args']
-            assert (-args.xmin)==args.xmax, 'xmin and xmax must be the same length'
-            step = 1/args.fps
-            bin_cen_t = create_symmetric_bin_center_t(tlen,step)
-            
-            # 2. Averaging across trials of a mouse: In each trial of a mouse, 
-            # we will pick inst_speed data corresponding to these points from 
-            # each trial using interpolation. Then we will average across 
-            # trials in each mouse.
-            inst_speed = []
-            for md in group_data: # each mouse
-                inst_speed_imouse = []
-                # Will use first channel data as motion is same for all channels
-                for d in md[0]['rdata']: # each trial
-                    # Create bin centers for each trial
-                    bw = np.median(np.diff(d['rel_mt']))
-                    # The actual times matching inst_speed in this trial
-                    bct = d['rel_mt'][0:-1]+bw/2                    
-                    # Interpolate to get inst_speed at our desired time points
-                    inst_speed_imouse.append(np.interp(bin_cen_t,bct,d['inst_speed']))
-                # Average across trials in each mouse
-                inst_speed.append(np.mean(np.array(inst_speed_imouse),axis=0))
-            mdata = np.array(inst_speed) # nMice-by-nTimeBins
+            grdata = rdp.collapse_rip_events_across_chan_for_each_trial(group_data,
+                                                               elec_sel_meth)
+            mdata = []
+            bct = []
+            for iMouse, md in enumerate(grdata):
+                data, bin_cen_t = compute_across_chan_pooled_inst_speed(md) # 2d np array: (nTrials, nTime points)
+                bct.append(bin_cen_t)
+                mdata.append(np.mean(data, axis=0))            
+            bin_cen_t = np.median(np.array(bct), axis=0)
+            mdata = np.array(mdata) # nMice-by-nTimeBins
             
     # mdata is 2D numpy array, nMice-by-nTimeBins of ripple rates or inst_speed
     # bin_cen_t - 1D numpy array of bin-center time in sec.

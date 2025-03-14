@@ -520,7 +520,10 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth='av
                         [md[iChan]['rdata'][i] for i in sel_ind]))
             # Average each trial data across all the channels of the given session
             # All channels will have the same number of trials
-            nTrials = len(sess_chan_data[0])
+            nTrials = [len(s) for s in sess_chan_data]
+            assert np.unique(nTrials).size==1, \
+            'channels of the same session have different number of trials'
+            nTrials = nTrials[0]
             sess_n_chan = len(sess_chan_data)
             for iTrial in range(nTrials):
                 # Motion data are same for all channels. So pick those from
@@ -544,7 +547,7 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth='av
                 # Build trial data structure as a dict
                 one_trial_data = {'rel_mt': cdata['rel_mt'], 'mx': cdata['mx'],
                                   'my': cdata['my'], 'inst_speed': cdata['inst_speed'],
-                                  'rip_cnt': rip_cnt,
+                                  'rip_cnt': rip_cnt, 'train_onset': cdata['train_onset'],
                                   'session_start_time': cdata['session_start_time']}
                 # This list will accumulate trials of all sessions of the
                 # current mouse
@@ -1161,45 +1164,41 @@ def pool_head_mov_across_mice(group_data, within_mouse_operator):
     all_rr_list = []
     tm_bin_cen_list = []
     for md in group_data:  # loop over mice
-        # For each mouse pick head disp data
-        crdata = copy.deepcopy(md[0]['rdata'])
-        
+        # For each mouse pick head disp data. In each channel of a mouse, we
+        # pooled trials from potentially multiple sessions. Also, each channel
+        # may have trials from different number of sessions. So we need to merge
+        # trials across different channels and then obtain trial data. For this,
+        # we will build a dict with session_start_time and train_onset time as
+        # keys, so that if the same combination of those time stamps are
+        # encountered again, data will simply be overwritten by the last update
+        # leaving only the unique combinations of the timestamps.
+        utrial_data = {}       
+        for chd in md:
+            for td in chd['rdata']:
+                key = (td['session_start_time'],td['train_onset'])              
+                utrial_data[key] = copy.deepcopy(td)
+        # Collapse
+        crdata = list(utrial_data.values())
         # Compute head displacement  or instantaneuous speed
         # using movement info from two adjacent video frames
-        # Create time bin centers
-        
+        # Create time bin centers        
         t_bin_cen_list = []
         for cr in crdata:
             rt = cr['rel_mt']
             ifi = np.nanmedian(np.diff(rt))  # inter-frame-interval
             tbc = rt[0:-1]+ifi/2
             t_bin_cen_list.append(tbc)
-        
-        # vx_list = [cr['mx'] for cr in crdata]
-        # vy_list = [cr['my'] for cr in crdata]
         ins_list = [cr['inst_speed'] for cr in crdata]        
 
         # # Use interpolation and compute a common time vector for all stimulation
-        # # trials, and the x and y coordinates corresponding to the common time points.
-        # t_bin_cen, mxi_list = gfun.interp_based_event_trig_data_average(
-        #     t_bin_cen_list, vx_list)
-        # _, myi_list = gfun.interp_based_event_trig_data_average(
-        #     t_bin_cen_list, vy_list)
+        # # trials, and the x and y coordinates corresponding to the common time points.       
         t_bin_cen, ins_speedi_list = gfun.sample_event_trig_data_evenly(
             t_bin_cen_list, ins_list)
         
         tm_bin_cen_list.append(t_bin_cen)
-        # # Compute head displacement in mm
-        # d_array = [convert_motion_traj_to_inst_disp(px, py)[0]
-        #            for px, py in zip(mxi_list, myi_list)]
-        # match metric:
-        #     case 'inst_speed':              
+        # # Compute head displacement in mm               
         mi_list = ins_speedi_list # mm/sec
-            # case 'disp':
-            #     mi_list = d_array  # mm
-            # case _:
-            #     raise ValueError('metric must be either inst_speed or disp')
-
+           
         # Pool data within mouse:
         # first change into 2D array where rows are trials
         mi_array = np.stack(mi_list, axis=0)
