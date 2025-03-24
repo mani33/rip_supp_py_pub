@@ -32,7 +32,8 @@ class Args():
         # Data length pre and post light pulse
         self.xmin = -4.0  # Add sign appropriately. If you want 1sec before light pulse, use -1
         self.xmax = 6.0
-        self.bin_width = 100  # bin width in msec
+        self.bin_width = 100  # bin width in msec for ripples
+        self.bin_width_motion_stats = self.bin_width # bin width for motion statistics only (not plotting)
         self.beh_state = 'nrem'  # beh state to collect ripples from: 'all','rem','nrem','awake'
 
         # in sec: time window to detect motion. Can be 4 element [-5 0 2 3] where [-5 0] and [2 3] are two separate windows.
