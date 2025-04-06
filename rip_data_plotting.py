@@ -132,7 +132,7 @@ def plot_head_mov_by_trial(rdata, args, hdax=None, mov_metric='inst_speed',
     
     
 
-def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[]):
+def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[], plot_median=False):
     """
     Averaged head displacement plot
     Use interpolation and sample head displacement at the same time points for 
@@ -167,8 +167,9 @@ def plot_mean_med_motion(t_list, v_list, xmin, xmax, dax, ylim=[]):
                      facecolor=error_col, edgecolor=edge_col)
     t = np.concatenate((t_vec[0::5], [t_vec[-1]]))
     m = np.concatenate((mov_med[0::5], [mov_med[-1]]))
-    dax.plot(t, m, color='k', marker='o', markersize=0.5, linestyle='-',
-             markerfacecolor='k', linewidth=linewidth, label='Median')
+    if plot_median:
+        dax.plot(t, m, color='k', marker='o', markersize=0.5, linestyle='-',
+                 markerfacecolor='k', linewidth=linewidth, label='Median')
     dax.plot(t_vec, mov_mean, color='k', linestyle='-',
              linewidth=linewidth, label='Mean')
     ph.boxoff(dax)

@@ -44,7 +44,7 @@ def get_sig_mod_times_for_each_mouse(group_data,stat_test,nBoot,
     pval = {} # p-values of significantly modulated clusters
     for iMouse,md in enumerate(grdata):
         mouse_id = md['animal_id']
-        print(f'Mouse {iMouse}/{len(grdata)}, ID: {mouse_id}')
+        print(f'Mouse {iMouse+1}/{len(grdata)}, ID: {mouse_id}')
         # Trim the right side end to match the length of pre-stim time
         sel_t_bins = np.round(md['bin_cen_t'],4) <= np.round(np.abs(np.min(md['bin_cen_t'])), 4)
         match data_type:
