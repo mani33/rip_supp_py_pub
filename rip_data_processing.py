@@ -546,7 +546,9 @@ def collapse_rip_events_across_chan_for_each_trial(group_data, elec_sel_meth='av
                 # Recreate cgroup_data data structure so it looks like group_data
                 # except that there will be only one collapsed channel now.
                 # Build trial data structure as a dict
-                one_trial_data = {'rel_mt': cdata['rel_mt'], 'mx': cdata['mx'],
+                one_trial_data = {'rel_mt': cdata['rel_mt'], 
+                                  'art_idx':cdata['art_idx'],
+                                  'mx': cdata['mx'],
                                   'my': cdata['my'], 'inst_speed': cdata['inst_speed'],
                                   'rip_cnt': rip_cnt, 'train_onset': cdata['train_onset'],
                                   'session_start_time': cdata['session_start_time']}
